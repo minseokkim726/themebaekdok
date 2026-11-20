@@ -294,8 +294,8 @@ run('v1.1 D 백업 버전', () => {
   eq('버전 2 파일 → 통과, 추천 1개 유지', [R.validateBackup(v2).ok, R.normalizeBackup(v2, 'x').recommendations.length], [true, 1]);
   eq('버전 2인데 추천 목록 없음 → 거부', R.validateBackup({ ...v2, data: base.data }).ok, false);
   eq('추천 id 중복 → 거부', R.validateBackup({ ...v2, data: { ...v2.data, recommendations: [{ id: 'r1' }, { id: 'r1' }] } }).ok, false);
-  eq('버전 5(더 새 앱) → 거부', R.validateBackup({ ...v2, schemaVersion: 5 }).ok, false);
-  eq('지금 앱의 버전 = 4 (v1.3)', R.SCHEMA_VERSION, 4);
+  eq('버전 6(더 새 앱) → 거부', R.validateBackup({ ...v2, schemaVersion: 6 }).ok, false);
+  eq('지금 앱의 버전 = 5 (v1.4)', R.SCHEMA_VERSION, 5);
 });
 
 run('v1.1 D 추천 붙여넣기', () => {
@@ -513,7 +513,7 @@ run('v1.2 D 히스토리', () => {
   eq('월별 완독: 기간의 모든 달(11월 1, 12월 1)', st.months, [{ ym: '2026-11', done: 1 }, { ym: '2026-12', done: 1 }]);
   eq('카테고리별', st.categories.map((c) => [c.name, c.done, c.goal]), [['가', 1, 1], ['나', 1, 1]]);
   const tot = R.historyTotals({ projects: [p1, p2], books, records: recs, settings: S });
-  eq('전체 합계: 2회, 완독 2권, 200쪽, 읽은 날 6일, 첫 기록일', tot, { count: 2, done: 2, pages: 200, readDays: 6, firstDate: '2026-11-01' });
+  eq('전체 합계: 2회, 완독 2권, 200쪽, 읽은 날 6일, 첫 기록일', tot, { count: 2, done: 2, doneProject: 2, doneOutside: 0, completed: 1, stopped: 0, active: 1, pages: 200, readDays: 6, firstDate: '2026-11-01' });
   const txt = R.projectSummaryText({ project: p1, ordinal: 1, subcategories: subs, books: books.filter((b) => b.projectId === 'p1'), stats: st }).split('\n');
   eq('정리 복사: 머리·설명·기간·숫자', txt.slice(0, 4), ['[테마백독 정리] 1번째 테마백독 · 읽기와 사고', '읽기가 사고를 만든다', '기간 2026.11.01 ~ 2026.12.10 (2개월)', '완독 2 / 2권 · 읽은 쪽수 150쪽 · 읽은 날 4일 · 최장 연속 3일']);
   eq('정리 복사: 완독 목록(완독일 순, 한 줄 생각·링크)', txt.slice(7), ['완독한 책', '1. 첫 책 (저자1) · 가 · 2026.11.05', '   한 줄 생각: 생각1', '   독서평: https://cafe.example/1', '2. 둘째 책 · 나 · 2026.12.08']);
@@ -570,7 +570,7 @@ run('v1.3 A', () => {
     data: { projects: [{ id: 'p1', status: '완료', startDate: '2026-12-01', endDate: '2027-01-02' }, { id: 'p2', status: '진행', startDate: '2027-01-03' }],
       subcategories: [], books: books.slice(0, 2), dayRecords: recs, recommendations: [], settings: {} } };
   eq('버전 3 파일 → 통과, 가져온 책 정보를 채워 가져옴', [R.validateBackup(v3).ok, R.normalizeBackup(v3, 'x').books[0].carriedFromPage], [true, 30]);
-  eq('지금 앱의 저장 형식 = 4', R.SCHEMA_VERSION, 4);
+  eq('지금 앱의 저장 형식 = 5 (v1.4)', R.SCHEMA_VERSION, 5);
 
   group('v1.3 A-3·A-4. 문구와 연도');
   eq('합계 줄 "백독 목표"', R.categorySumText(95, 100).text, '합계 95권 / 백독 목표 100권 · 5권 부족');
@@ -581,6 +581,113 @@ run('v1.3 A', () => {
     records: [], settings: S, today: '2026-11-20' });
   const line = R.statsText(sStats, { name: '글쓰기' }, S, 2, '2026-11-20').split('\n').find((l) => l.startsWith('백독 예상 완료'));
   eq('통계 복사 문구의 예상 완료일에 연도', /^백독 예상 완료: \d{4}년 \d{1,2}월 \d{1,2}일$/.test(line), true);
+});
+
+run('v1.4 1단계', () => {
+  group('v1.4 2장. 같은 날 여러 책 → 그날 합계로 판단');
+  const two = [
+    { id: '2026-11-20|a', date: '2026-11-20', bookId: 'a', projectId: 'p', pages: 15, mode: 'pages' },
+    { id: '2026-11-20|x', date: '2026-11-20', bookId: 'x', projectId: null, pages: 10, mode: 'pages' },
+    { id: '2026-11-19|a', date: '2026-11-19', bookId: 'a', projectId: 'p', pages: 9, mode: 'pages' },
+    { id: '2026-11-19|x', date: '2026-11-19', bookId: 'x', projectId: null, pages: 0, minutes: 30, mode: 'time' },
+  ];
+  const day = R.recordMap(two).get('2026-11-20');
+  eq('백독 15쪽 + 백독 외 10쪽 = 25쪽, 최소선', [day.pages, R.gradeOf(day, S), day.records.length], [25, 'min', 2]);
+  eq('9쪽 + 30분 = 최소선(분 합계)', R.gradeOf(R.recordMap(two).get('2026-11-19'), S), 'min');
+  eq('연속일수: 이틀(같은 날 두 건은 하루로)', R.streak(two, S, '2026-11-20'), 2);
+  eq('누적 읽은 날: 2일', R.totalReadDays(two, S, null), 2);
+  const w = R.weekStats(two, S, '2026-11-20', '2026-11-19');
+  eq('주간 쪽수 34쪽, 최소선 2/2일', [w.pages, w.minDays, w.countedDays], [34, 2, 2]);
+  eq('읽은 날 하루 평균은 날짜별 합계로(34쪽/2일=17)', R.cycleStats({ project: { id: 'p', startDate: '2026-11-19', targetBooks: 100 }, subcategories: [], books: [], records: two, settings: S, today: '2026-11-20' }).speed.pagesPerReadDay, 17);
+  eq('기록 열쇠 = 날짜|책', R.recordKey('2026-11-20', 'a'), '2026-11-20|a');
+
+  group('v1.4 A2. 이미 읽은 쪽수(readBefore)는 출발점일 뿐');
+  eq('첫 기록의 "어제까지" = 이미 읽은 쪽수 120', R.prevEndPage([], 'm', '2026-11-20', 120), 120);
+  const r1 = R.makePagesRecord({ date: '2026-11-20', projectId: null, bookId: 'm', endPage: 120, totalPages: 300, records: [], base: 120 });
+  eq('추가한 날 120쪽 그대로면 오늘 0쪽', [r1.endPage, r1.pages, r1.id], [120, 0, '2026-11-20|m']);
+  const r2 = R.makePagesRecord({ date: '2026-11-21', projectId: null, bookId: 'm', endPage: 140, totalPages: 300, records: [r1], base: 120 });
+  eq('다음 기록 +20 → 140쪽, 오늘 20쪽', [r2.endPage, r2.pages], [140, 20]);
+  eq('첫 기록부터 +20 → 140쪽, 20쪽(120쪽을 더하지 않음)', R.makePagesRecord({ date: '2026-11-20', bookId: 'm', endPage: 140, totalPages: 300, records: [], base: 120 }).pages, 20);
+  eq('다시 계산할 때도 출발점 120', R.recomputeBook([{ ...r2, pages: 999 }], 'm', 120).map((r) => r.pages), [20]);
+  eq('기록 없을 때 현재 쪽 = 120', R.latestEndPage([], 'm', 120), 120);
+  eq('30분 기록은 현재 쪽 그대로(120)', R.makeTimeRecord({ date: '2026-11-20', bookId: 'm', records: [], settings: S, base: 120 }).endPage, 120);
+
+  group('v1.4 마이그레이션(백업 파일 v1~v5)');
+  const oldBooks = [{ id: 'b1', projectId: 'p1', status: 'done', subcategoryId: 'c' }, { id: 'b2', projectId: 'p2', status: 'reading', subcategoryId: 'c2' }];
+  const oldRecs = [{ date: '2026-11-19', bookId: 'b1', projectId: 'p1', pages: 20, endPage: 20, mode: 'pages' }, { date: '2026-11-20', bookId: 'b2', projectId: 'p2', pages: 30, endPage: 30, mode: 'pages' }];
+  const v4 = { app: 'themebaekdok', schemaVersion: 4, exportedAt: '2026-11-20T00:00:00Z', data: {
+    projects: [{ id: 'p1', status: '완료', startDate: '2026-01-01', endDate: '2026-11-19', targetBooks: 1 }, { id: 'p2', status: '진행', startDate: '2026-11-20', targetBooks: 100 }],
+    subcategories: [], books: oldBooks, dayRecords: oldRecs, recommendations: [], settings: {} } };
+  eq('버전 4 파일 → 통과', R.validateBackup(v4).ok, true);
+  const n4 = R.normalizeBackup(v4, 'x');
+  eq('모든 책 백독 소속, 이미 읽은 쪽수 0', n4.books.map((b) => [b.scope, b.readBefore]), [['project', 0], ['project', 0]]);
+  eq('기록 그대로 + 열쇠(날짜|책)', n4.dayRecords.map((r) => [r.id, r.pages, r.endPage, r.projectId]), [['2026-11-19|b1', 20, 20, 'p1'], ['2026-11-20|b2', 30, 30, 'p2']]);
+  eq('마친 백독: 완독 1 ≥ 목표 1 → 완료', n4.projects.map((p) => p.endType || null), ['완료', null]);
+  const v4b = { ...v4, data: { ...v4.data, projects: [{ ...v4.data.projects[0], targetBooks: 100 }, v4.data.projects[1]] } };
+  eq('마친 백독: 완독 1 < 목표 100 → 중단', R.normalizeBackup(v4b, 'x').projects[0].endType, '중단');
+  const v5 = { ...v4, schemaVersion: 5, data: { ...v4.data, dayRecords: [
+    { id: '2026-11-20|b2', date: '2026-11-20', bookId: 'b2', pages: 15 }, { id: '2026-11-20|b1', date: '2026-11-20', bookId: 'b1', pages: 10 }] } };
+  eq('버전 5: 같은 날 두 책 기록 → 통과', R.validateBackup(v5).ok, true);
+  eq('버전 5: 같은 날 같은 책 두 번 → 거부', R.validateBackup({ ...v5, data: { ...v5.data, dayRecords: [v5.data.dayRecords[0], v5.data.dayRecords[0]] } }).ok, false);
+  eq('버전 4 이하: 같은 날 두 건은 예전처럼 거부', R.validateBackup({ ...v4, data: { ...v4.data, dayRecords: [oldRecs[1], { ...oldRecs[1], bookId: 'b1' }] } }).ok, false);
+  eq('버전 6(더 새 앱) → 거부', R.validateBackup({ ...v5, schemaVersion: 6 }).ok, false);
+  eq('지금 저장 형식 = 5', R.SCHEMA_VERSION, 5);
+  eq('이미 정리된 책은 그대로(같은 객체)', (() => { const b = { id: 'z', scope: 'outside', readBefore: 5, projectId: null }; return R.migrateBooks([b])[0] === b; })(), true);
+});
+
+run('v1.4 2단계', () => {
+  group('v1.4 A1. 소속 바꾸기');
+  const P = { id: 'p2', status: '진행', startDate: '2026-11-01' };
+  const recs = [
+    { id: '2026-10-30|o', date: '2026-10-30', bookId: 'o', projectId: null, pages: 10 },
+    { id: '2026-11-02|o', date: '2026-11-02', bookId: 'o', projectId: null, pages: 20 },
+    { id: '2026-11-02|z', date: '2026-11-02', bookId: 'z', projectId: 'p2', pages: 5 },
+  ];
+  const out = { id: 'o', scope: 'outside', projectId: null, subcategoryId: null, prevSubcategoryId: 'c9', status: 'reading' };
+  let err = '';
+  try { R.planScopeChange({ book: out, toScope: 'project', project: P, records: recs }); } catch (e) { err = e.message; }
+  eq('백독 외 → 포함: 카테고리 필수', err, '카테고리를 골라 주세요.');
+  const toP = R.planScopeChange({ book: out, toScope: 'project', project: P, subcategoryId: 'c1', records: recs });
+  eq('포함으로: scope project, 진행 중 백독·카테고리 붙음', [toP.book.scope, toP.book.projectId, toP.book.subcategoryId], ['project', 'p2', 'c1']);
+  eq('그 책의 기록 소속도 옮김(다른 책 기록은 그대로)', toP.records.map((r) => [r.id, r.projectId]), [['2026-10-30|o', 'p2'], ['2026-11-02|o', 'p2']]);
+  const inB = { id: 'z', scope: 'project', projectId: 'p2', subcategoryId: 'c1', status: 'done' };
+  const toO = R.planScopeChange({ book: inB, toScope: 'outside', project: P, records: recs });
+  eq('포함 → 백독 외: 카테고리 비우고 이전 값 보관(완독 후에도 가능)', [toO.book.scope, toO.book.projectId, toO.book.subcategoryId, toO.book.prevSubcategoryId, toO.book.status], ['outside', null, null, 'c1', 'done']);
+  eq('백독 외로: 기록 소속 null', toO.records.map((r) => [r.id, r.projectId]), [['2026-11-02|z', null]]);
+  err = '';
+  try { R.planScopeChange({ book: { ...inB, projectId: 'p1' }, toScope: 'outside', project: P, records: recs }); } catch (e) { err = e.message; }
+  eq('마친 테마백독의 책은 소속 변경 불가', err, '마친 테마백독의 책은 소속을 바꿀 수 없어요.');
+  err = '';
+  try { R.planScopeChange({ book: out, toScope: 'project', project: null, subcategoryId: 'c1', records: recs }); } catch (e) { err = e.message; }
+  eq('진행 중 백독이 없으면 포함으로 못 바꿈', err.startsWith('진행 중인 테마백독이 없어요'), true);
+  eq('같은 소속이면 바뀌는 것 없음', R.planScopeChange({ book: out, toScope: 'outside', project: P, records: recs }).records, []);
+
+  group('v1.4 A3·B-M5. 집계 구분');
+  eq('주간 쪽수 목표 = 목표선×7, 최소 = 최소선×7', R.weekPageGoal(S), { goal: 350, min: 140 });
+  eq('설정을 바꾸면 따라감(목표 40·최소 15)', R.weekPageGoal({ ...S, goalPages: 40, minPages: 15 }), { goal: 280, min: 105 });
+  const books = [
+    { id: 'a', status: 'done', scope: 'project', projectId: 'p1', subcategoryId: 'c1', finishDate: '2026-11-18' },
+    { id: 'b', status: 'done', scope: 'outside', projectId: null, finishDate: '2026-11-19' },
+    { id: 'c', status: 'reading', scope: 'outside', projectId: null },
+  ];
+  const cp = R.categoryProgress([{ id: 'c1', name: '가', targetBooks: 10, order: 0 }], books.filter((b) => b.scope !== 'outside'), 10);
+  eq('달성률·카테고리 막대는 백독 책만(백독 외 완독 제외)', [cp.done, cp.rows[0].done], [1, 1]);
+  eq('주간 완독: 백독 1 / 백독 외 1 따로', [R.doneThisWeek(books.filter((b) => b.scope !== 'outside'), '2026-11-20'), R.doneThisWeek(books.filter((b) => b.scope === 'outside'), '2026-11-20')], [1, 1]);
+  const tot = R.historyTotals({ projects: [{ id: 'p1', status: '완료', endType: '중단' }, { id: 'p2', status: '진행' }], books, records: [], settings: S });
+  eq('히스토리 합계: 백독 1 · 백독 외 1, 완료 0 · 중단 1 · 진행 1', [tot.doneProject, tot.doneOutside, tot.completed, tot.stopped, tot.active], [1, 1, 0, 1, 1]);
+});
+
+run('v1.4 3단계', () => {
+  group('v1.4 B-H3. 마치기 완료/중단·메모');
+  const p = { id: 'p1', status: '진행', startDate: '2026-01-01', targetBooks: 100 };
+  const books = [{ id: 'r', projectId: 'p1', status: 'reading', totalPages: 100 }, { id: 'o', projectId: null, scope: 'outside', status: 'reading' }];
+  const a = R.planFinishProject({ project: p, books, today: '2026-11-20', readingAction: 'carry', endType: '중단', endNote: '  다시 시작 ' });
+  eq('중단으로 마치기: endType 중단, 메모 다듬어 저장', [a.project.endType, a.project.endNote, a.project.status], ['중단', '다시 시작', '완료']);
+  eq('백독 외 읽는 중 책은 건드리지 않음', a.books.map((b) => b.id), ['r']);
+  const b = R.planFinishProject({ project: p, books, today: '2026-11-20', readingAction: 'drop', endType: '완료', endNote: '무시됨' });
+  eq('완료로 마치기: 메모 없음', [b.project.endType, b.project.endNote], ['완료', '']);
+  const re = R.planReopenProject({ projects: [a.project], books: [], projectId: 'p1' });
+  eq('되돌리기: endType·메모 지움', [re.project.status, re.project.endType, re.project.endNote], ['진행', null, '']);
 });
 
 const sum = document.getElementById('summary');

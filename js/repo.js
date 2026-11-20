@@ -5,9 +5,13 @@ import * as R from './rules.js';
 import { todayStr } from './format.js';
 
 const DB_NAME = 'themebaekdok';
-// 저장소 버전 기록: 1 = 1단계, 2 = v1.1 추천 도서(recommendations) 추가. 기존 저장소·데이터는 그대로 둔다.
-const DB_VERSION = 2;
-const STORES = ['projects', 'subcategories', 'books', 'dayRecords', 'settings', 'meta', 'recommendations'];
+// 저장소 버전 기록(기존 저장소·데이터는 지우지 않는다):
+//  1 = 1단계
+//  2 = v1.1 추천 도서(recommendations) 추가
+//  3 = v1.4 하루 기록을 '날짜+책' 열쇠의 records로 옮김(같은 날 여러 책). 예전 dayRecords(날짜 열쇠)는
+//      그대로 남겨 두는 안전용 사본이고 더 이상 읽거나 쓰지 않는다.
+const DB_VERSION = 3;
+const STORES = ['projects', 'subcategories', 'books', 'records', 'settings', 'meta', 'recommendations'];
 
 const FIRST_SUBCATEGORIES = [
   ['독서·문해력', 25],
@@ -24,17 +28,28 @@ function openDb() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    // 없는 저장소만 만든다(버전 1에서 올라올 때 기존 데이터를 건드리지 않음)
-    req.onupgradeneeded = () => {
+    // 없는 저장소만 만든다(예전 버전에서 올라올 때 기존 데이터를 건드리지 않음)
+    req.onupgradeneeded = (e) => {
       const db = req.result;
       const make = (name, keyPath) => { if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath }); };
       make('projects', 'id');
       make('subcategories', 'id');
       make('books', 'id');
-      make('dayRecords', 'date');
       make('settings', 'id');
       make('meta', 'id');
       make('recommendations', 'id');
+      const fresh = !db.objectStoreNames.contains('records');
+      make('records', 'id');
+      // v1.3 이하(저장소 버전 1·2)에서 올라오면: 날짜 열쇠 기록을 '날짜|책' 열쇠로 한 건도 빠짐없이 복사한다.
+      // 같은 업그레이드 안에서 처리되므로 중간에 끊기면 전체가 취소되고 예전 상태가 그대로 남는다.
+      if (fresh && e.oldVersion > 0 && db.objectStoreNames.contains('dayRecords')) {
+        const tx = req.transaction;
+        const getAll = tx.objectStore('dayRecords').getAll();
+        getAll.onsuccess = () => {
+          const out = tx.objectStore('records');
+          for (const r of R.migrateRecords(getAll.result)) out.put(r);
+        };
+      }
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -42,7 +57,7 @@ function openDb() {
       resolve(db);
     };
     req.onerror = () => { dbPromise = null; reject(req.error); };
-    // 예전 버전이 다른 탭에 열려 있으면 그 탭이 저장소를 닫을 때까지 기다린다(1단계 코드도 스스로 닫는다)
+    // 예전 버전이 다른 탭에 열려 있으면 그 탭이 저장소를 닫을 때까지 기다린다(예전 코드도 스스로 닫는다)
     req.onblocked = () => {};
   });
   return dbPromise;
@@ -91,6 +106,8 @@ function settingsOf(rows) {
   return { ...R.DEFAULT_SETTINGS, ...rest };
 }
 
+const base = (book) => Number(book && book.readBefore) || 0;
+
 // ---------- 시작 ----------
 // 저장소를 열고, 처음이면 기본 프로젝트를 만든다. { firstRun } 반환
 export async function init() {
@@ -99,16 +116,22 @@ export async function init() {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   } catch { /* 지원하지 않는 브라우저는 그냥 넘어간다 */ }
 
-  const all = await readAll(['projects', 'meta', 'books', 'dayRecords']);
+  const all = await readAll(['projects', 'meta', 'books', 'records']);
   if (all.projects.length > 0) {
     const meta = all.meta.find((m) => m.id === 'meta') || { id: 'meta' };
     if ((meta.schemaVersion || 1) < R.SCHEMA_VERSION) {
-      // 최신 형식으로 올림(다른 데이터는 그대로):
+      // 최신 형식으로 올림(다른 데이터는 그대로, 바뀐 것만 다시 쓴다):
       //  버전 3 - 프로젝트에 endDate 칸 추가, 예전 기본 설명 "1사이클" 비우기
       //  버전 4 - 이미 다음 백독으로 옮긴 책에 가져온 쪽수·원래 백독 채우기(기록에서 계산)
-      const books = R.inferCarried(all.books, all.dayRecords);
-      const changedBooks = books.filter((b, i) => b !== all.books[i]);
-      await write({ put: { projects: R.migrateProjects(all.projects), books: changedBooks, meta: [{ ...meta, schemaVersion: R.SCHEMA_VERSION }] } });
+      //  버전 5 - 책에 소속(모두 project)·이미 읽은 쪽수(0), 마친 백독에 완료/중단, 기록에 열쇠(id)
+      const books = R.migrateBooks(R.inferCarried(all.books, all.records));
+      const changedBooks = books.filter((b, i) => JSON.stringify(b) !== JSON.stringify(all.books[i]));
+      const records = R.migrateRecords(all.records);
+      const changedRecs = records.filter((r, i) => r !== all.records[i]);
+      await write({ put: {
+        projects: R.migrateProjects(all.projects, books), books: changedBooks, records: changedRecs,
+        meta: [{ ...meta, schemaVersion: R.SCHEMA_VERSION }],
+      } });
     }
     return { firstRun: false };
   }
@@ -130,17 +153,29 @@ export async function init() {
 }
 
 // 화면에 필요한 모든 데이터를 한 번에 돌려준다(데이터가 작아서 통째로 읽는다)
-// project: 진행 중인 백독(없으면 null). 책·카테고리·추천은 진행 중인 백독의 것만.
-// records: 전체 기록(연속일수·쉰 날 안내는 백독과 무관하게 계산), projectRecords: 진행 중인 백독의 기록.
+// project: 진행 중인 백독(없으면 null).
+// books: 진행 중인 백독의 책(달성률·카테고리용). outsideBooks: 백독 외 책(어느 백독에도 묶이지 않음).
+// readingBooks: 읽는 중인 책 전부(백독 + 백독 외), 가장 최근에 기록한 책이 앞. readingBook = 그 첫 책.
+// records: 전체 기록(연속·쉰 날·주간 막대). projectRecords: 진행 중인 백독 기간의 기록(백독 외 책 포함, 통계용).
 export async function load() {
-  const all = await readAll(['projects', 'subcategories', 'books', 'dayRecords', 'settings', 'recommendations']);
-  const projects = R.migrateProjects(all.projects);
+  const all = await readAll(['projects', 'subcategories', 'books', 'records', 'settings', 'recommendations']);
+  const allBooks = R.migrateBooks(all.books).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const projects = R.migrateProjects(all.projects, allBooks);
   const project = R.activeProject(projects);
   const pid = project ? project.id : null;
   const ordinals = R.projectOrdinals(projects);
-  const allBooks = all.books.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const books = allBooks.filter((b) => b.projectId === pid);
-  const records = all.dayRecords.sort((a, b) => (a.date < b.date ? -1 : 1));
+  const books = allBooks.filter((b) => !R.isOutside(b) && b.projectId === pid && pid);
+  const outsideBooks = allBooks.filter((b) => R.isOutside(b));
+  const records = R.migrateRecords(all.records).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const lastTouch = (bookId) => records.reduce((m, r) => {
+    if (r.bookId !== bookId) return m;
+    const k = `${r.date}|${r.savedAt || ''}`;
+    return k > m ? k : m;
+  }, '');
+  const readingBooks = [...books, ...outsideBooks].filter((b) => b.status === 'reading')
+    .map((b) => ({ b, k: lastTouch(b.id) || `0|${b.startDate || ''}` }))
+    .sort((x, y) => (x.k < y.k ? 1 : x.k > y.k ? -1 : 0))
+    .map((x) => x.b);
   return {
     project,
     ordinal: project ? ordinals[project.id] : null,
@@ -149,12 +184,14 @@ export async function load() {
     subcategories: all.subcategories.filter((c) => c.projectId === pid).sort((a, b) => a.order - b.order),
     allSubcategories: all.subcategories,
     books,
+    outsideBooks,
     allBooks,
     records,
-    projectRecords: records.filter((r) => r.projectId === pid),
-    firstStart: projects.reduce((m, p) => (!m || (p.startDate && p.startDate < m) ? p.startDate : m), null),
+    projectRecords: project ? records.filter((r) => (r.projectId === pid || r.projectId == null) && r.date >= project.startDate) : [],
+    firstStart: [...projects.map((p) => p.startDate), ...records.map((r) => r.date)].filter(Boolean).sort()[0] || null,
     settings: settingsOf(all.settings),
-    readingBook: books.find((b) => b.status === 'reading') || null,
+    readingBooks,
+    readingBook: readingBooks[0] || null,
     recommendations: all.recommendations.filter((r) => r.projectId === pid),
   };
 }
@@ -172,11 +209,13 @@ export async function updateProject({ name, description, startDate, targetBooks 
   }] } });
 }
 
-// 이 테마백독 마치기. readingAction: 'carry' | 'finish' | 'drop' (읽는 중 책이 없으면 무시)
-export async function finishProject(readingAction) {
+// 이 테마백독 마치기. readingAction: 'carry' | 'finish' | 'drop' (읽는 중인 백독 책에만, 백독 외 책은 그대로)
+// endType: '완료' | '중단', endNote: 중단 메모(선택)
+export async function finishProject(readingAction, endType = R.END_DONE, endNote = '') {
   const d = await load();
   if (!d.project) throw new Error('진행 중인 테마백독이 없습니다.');
-  const plan = R.planFinishProject({ project: d.project, books: d.allBooks, today: todayStr(), readingAction: d.readingBook ? readingAction : 'drop' });
+  const hasReading = d.books.some((b) => b.status === 'reading');
+  const plan = R.planFinishProject({ project: d.project, books: d.books, today: todayStr(), readingAction: hasReading ? readingAction : 'drop', endType, endNote });
   await write({ put: { projects: [plan.project], books: plan.books } });
   return plan.project;
 }
@@ -185,7 +224,7 @@ export async function finishProject(readingAction) {
 export async function startProject(input, structure) {
   const d = await load();
   const plan = R.planStartProject({
-    projects: d.projects, subcategories: d.allSubcategories, books: d.allBooks,
+    projects: d.projects, subcategories: d.allSubcategories, books: d.allBooks.filter((b) => !R.isOutside(b)),
     input, structure, makeId: newId, today: todayStr(), now: new Date().toISOString(),
   });
   await write({ put: { projects: [plan.project], subcategories: plan.subcategories, books: plan.books } });
@@ -244,22 +283,22 @@ export async function hideRecommendation(id) {
   if (r) await write({ put: { recommendations: [{ ...r, hidden: true }] } });
 }
 
-// 책 기록을 다시 계산하고, 읽는 중·읽을 목록·중단 책의 현재 쪽을 맞춘다
+// 책 기록을 다시 계산하고, 완독하지 않은 책의 현재 쪽을 맞춘다(출발점 = 이미 읽은 쪽수)
 function reconcile(records, books, bookIds) {
   const recPut = [];
   const bookPut = [];
   let list = records;
   for (const bookId of bookIds) {
     if (!bookId) continue;
-    const changed = R.recomputeBook(list, bookId);
+    const book = books.find((b) => b.id === bookId);
+    const changed = R.recomputeBook(list, bookId, base(book));
     if (changed.length) {
-      const byDate = new Map(changed.map((r) => [r.date, r]));
-      list = list.map((r) => byDate.get(r.date) || r);
+      const byId = new Map(changed.map((r) => [r.id, r]));
+      list = list.map((r) => byId.get(r.id) || r);
       recPut.push(...changed);
     }
-    const book = books.find((b) => b.id === bookId);
     if (book && book.status !== 'done') {
-      const cur = R.latestEndPage(list, bookId);
+      const cur = R.latestEndPage(list, bookId, base(book));
       if (cur !== book.currentPage) bookPut.push({ ...book, currentPage: cur });
     }
   }
@@ -267,73 +306,92 @@ function reconcile(records, books, bookIds) {
 }
 
 // ---------- 하루 기록 ----------
-// mode 'pages'면 endPage(현재 쪽)를 저장, 'time'이면 30분 읽음으로 저장. 같은 날짜는 덮어쓴다.
+// mode 'pages'면 endPage(현재 쪽)를 저장, 'time'이면 30분 읽음으로 저장. 같은 날 같은 책은 덮어쓴다.
+// 같은 날 다른 책 기록은 그대로 둔다(하루 등급은 rules.js가 그날 합계로 계산).
 export async function saveDay({ date, bookId, mode, endPage }) {
   const d = await load();
   const book = d.allBooks.find((b) => b.id === bookId);
   if (!book) throw new Error('책을 찾을 수 없습니다.');
-  const old = d.records.find((r) => r.date === date);
-  const others = d.records.filter((r) => r.date !== date);
-  const rec = mode === 'time'
-    ? R.makeTimeRecord({ date, projectId: book.projectId, bookId, records: others, settings: d.settings })
-    : R.makePagesRecord({ date, projectId: book.projectId, bookId, endPage, totalPages: book.totalPages, records: others });
-  const records = [...others, rec];
-  const { recPut, bookPut } = reconcile(records, d.allBooks, [bookId, old && old.bookId !== bookId ? old.bookId : null]);
+  const key = R.recordKey(date, bookId);
+  const others = d.records.filter((r) => r.id !== key);
+  const projectId = R.isOutside(book) ? null : book.projectId;
+  const made = mode === 'time'
+    ? R.makeTimeRecord({ date, projectId, bookId, records: others, settings: d.settings, base: base(book) })
+    : R.makePagesRecord({ date, projectId, bookId, endPage, totalPages: book.totalPages, records: others, base: base(book) });
+  const rec = { ...made, savedAt: new Date().toISOString() };
+  const { recPut, bookPut } = reconcile([...others, rec], d.allBooks, [bookId]);
   // 새 기록 자체도 다시 계산된 값이 있으면 그것을 쓴다
-  const finalRec = recPut.find((r) => r.date === date) || rec;
-  await write({ put: { dayRecords: [finalRec, ...recPut.filter((r) => r.date !== date)], books: bookPut } });
+  const finalRec = recPut.find((r) => r.id === key) || rec;
+  await write({ put: { records: [finalRec, ...recPut.filter((r) => r.id !== key)], books: bookPut } });
   return finalRec;
 }
 
 // ---------- 책 ----------
-// 읽는 중인 책을 정리한다: 'finish' 완독 / 'drop' 중단 / 'planned' 읽을 목록으로
-function retire(book, how, today) {
-  if (!book) return [];
-  if (how === 'finish') return [{ ...book, status: 'done', finishDate: today, currentPage: book.totalPages }];
-  if (how === 'drop') return [{ ...book, status: 'dropped' }];
-  if (how === 'planned') return [{ ...book, status: 'planned' }];
-  throw new Error('읽는 중인 책을 어떻게 할지 정해야 합니다.');
-}
-
-export async function addBook({ title, author, totalPages, subcategoryId, startNow, replace, recommendationId = null }) {
+// 책 추가. scope 'project'(진행 중인 테마백독, 카테고리 필수) | 'outside'(백독 외)
+// readBefore: 앱에 넣기 전 이미 읽은 쪽수(진행률 출발점, 오늘·주간·누적 쪽수에는 더하지 않음)
+// 읽는 중인 책은 여러 권일 수 있다(v1.4).
+export async function addBook({ title, author, totalPages, subcategoryId, startNow, scope = 'project', readBefore = 0, startDate = null, recommendationId = null }) {
   const d = await load();
-  if (!d.project) throw new Error('진행 중인 테마백독이 없습니다. 먼저 새 테마백독을 시작하세요.');
+  const outside = scope === 'outside';
+  if (!outside && !d.project) throw new Error('진행 중인 테마백독이 없습니다. "백독 외 독서"로 추가하거나 새 테마백독을 시작하세요.');
+  if (!outside && !subcategoryId) throw new Error('카테고리를 골라 주세요.');
   const today = todayStr();
+  const total = Math.round(Number(totalPages));
+  const before = Math.min(Math.max(0, Math.round(Number(readBefore) || 0)), total);
   const order = d.allBooks.reduce((m, b) => Math.max(m, b.order ?? 0), 0) + 1;
   const book = {
-    id: newId('b'), projectId: d.project.id, subcategoryId,
+    id: newId('b'), projectId: outside ? null : d.project.id, subcategoryId: outside ? null : subcategoryId,
+    scope: outside ? 'outside' : 'project', readBefore: before,
     title: String(title).trim(), author: String(author || '').trim(),
-    totalPages: Math.round(Number(totalPages)), order,
+    totalPages: total, order,
     status: startNow ? 'reading' : 'planned',
-    startDate: startNow ? today : null, finishDate: null,
-    thought: '', reviewUrl: '', currentPage: 0,
+    startDate: startNow ? (R.isDateStr(startDate) ? startDate : today) : null, finishDate: null,
+    thought: '', reviewUrl: '', currentPage: before,
   };
-  const put = [book];
-  if (startNow && d.readingBook) put.push(...retire(d.readingBook, replace, today));
   const rec = recommendationId && d.recommendations.find((r) => r.id === recommendationId);
-  await write({ put: { books: put, ...(rec ? { recommendations: [{ ...rec, addedBookId: book.id }] } : {}) } });
+  await write({ put: { books: [book], ...(rec ? { recommendations: [{ ...rec, addedBookId: book.id }] } : {}) } });
   return book;
 }
 
-export async function startReading(bookId, replace) {
-  const d = await load();
-  const today = todayStr();
-  const book = d.books.find((b) => b.id === bookId);
-  if (!book) throw new Error('책을 찾을 수 없습니다.');
-  const put = [{ ...book, status: 'reading', startDate: book.startDate || today, currentPage: R.latestEndPage(d.records, bookId) }];
-  if (d.readingBook && d.readingBook.id !== bookId) put.push(...retire(d.readingBook, replace, today));
-  await write({ put: { books: put } });
+function findOpenBook(d, bookId) {
+  return d.books.find((b) => b.id === bookId) || d.outsideBooks.find((b) => b.id === bookId) || null;
 }
 
-// 완독 처리(또는 완독한 책 정보 수정)
+// 읽을 목록의 책을 읽기 시작(다른 읽는 중 책은 그대로)
+export async function startReading(bookId) {
+  const d = await load();
+  const book = findOpenBook(d, bookId);
+  if (!book) throw new Error('책을 찾을 수 없습니다.');
+  await write({ put: { books: [{ ...book, status: 'reading', startDate: book.startDate || todayStr(), currentPage: R.latestEndPage(d.records, bookId, base(book)) }] } });
+}
+
+// 읽는 중인 책을 중단(dropped, 기록은 남음)하거나 읽을 목록(planned)으로 되돌린다
+export async function setBookStatus(bookId, status) {
+  if (!['dropped', 'planned'].includes(status)) throw new Error('바꿀 수 없는 상태입니다.');
+  const d = await load();
+  const book = findOpenBook(d, bookId);
+  if (!book) throw new Error('책을 찾을 수 없습니다.');
+  await write({ put: { books: [{ ...book, status }] } });
+}
+
+// 소속 바꾸기: 'project'(카테고리 필수) ↔ 'outside'
+export async function changeScope(bookId, toScope, subcategoryId = null) {
+  const d = await load();
+  const book = d.allBooks.find((b) => b.id === bookId);
+  const plan = R.planScopeChange({ book, toScope, project: d.project, subcategoryId, records: d.records });
+  await write({ put: { books: [plan.book], records: plan.records } });
+  return plan.book;
+}
+
+// 완독 처리(또는 완독한 책 정보 수정). 백독 외 책은 카테고리 없음.
 export async function finishBook(bookId, { finishDate, subcategoryId, thought, reviewUrl }) {
   const d = await load();
-  const book = d.books.find((b) => b.id === bookId);
+  const book = findOpenBook(d, bookId);
   if (!book) throw new Error('책을 찾을 수 없습니다.');
   const done = {
     ...book, status: 'done',
     finishDate: R.isDateStr(finishDate) ? finishDate : todayStr(),
-    subcategoryId: subcategoryId || book.subcategoryId,
+    subcategoryId: R.isOutside(book) ? null : (subcategoryId || book.subcategoryId),
     thought: String(thought || '').trim(),
     reviewUrl: String(reviewUrl || '').trim(),
     currentPage: book.totalPages,
@@ -389,7 +447,7 @@ export async function exportData() {
       projects: all.projects,
       subcategories: all.subcategories,
       books: all.books,
-      dayRecords: all.dayRecords,
+      dayRecords: all.records, // 파일 속 이름은 예전과 같이 dayRecords(버전 5부터 날짜+책당 1건)
       recommendations: all.recommendations,
       // 파일 안의 마지막 백업 시각 = 내보낸 시각(이 파일로 복원하면 알림이 바로 뜨지 않게)
       settings: { ...settingsOf(all.settings), lastBackupAt: exportedAt },
@@ -412,10 +470,10 @@ export async function importData(obj) {
       projects: data.projects,
       subcategories: data.subcategories,
       books: data.books,
-      dayRecords: data.dayRecords,
+      records: data.dayRecords,
       recommendations: data.recommendations,
       settings: [{ id: 'settings', ...data.settings }],
-      // 버전 2 파일은 추천을 그대로 가져온다. 버전 1 파일은 추천 없음 → 다음 시작 때 초안을 한 번 넣는다.
+      // 버전 2 이상 파일은 추천을 그대로 가져온다. 버전 1 파일은 추천 없음 → 다음 시작 때 초안을 한 번 넣는다.
       meta: [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION, recSeeded: obj.schemaVersion >= 2 }],
     },
   });

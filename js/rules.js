@@ -73,11 +73,28 @@ export function gradeOf(record, settings = DEFAULT_SETTINGS) {
   return 'none';
 }
 
+// 날짜별 합계: 같은 날 여러 책 기록의 쪽수·분을 더한 하루 기록 { date, pages, minutes, mode, records }
+// (v1.4부터 하루에 책마다 1건씩 기록할 수 있다. 등급·연속·주간·달력은 모두 이 합계를 쓴다)
 export function recordMap(records) {
   const m = new Map();
-  for (const r of records || []) m.set(r.date, r);
+  for (const r of records || []) {
+    const cur = m.get(r.date);
+    const pages = Number(r.pages) || 0;
+    const minutes = Number(r.minutes) || 0;
+    if (!cur) {
+      m.set(r.date, { date: r.date, pages, minutes, mode: r.mode === 'time' ? 'time' : 'pages', records: [r] });
+    } else {
+      cur.pages += pages;
+      cur.minutes += minutes;
+      if (r.mode !== 'time') cur.mode = 'pages';
+      cur.records.push(r);
+    }
+  }
   return m;
 }
+
+// 하루 기록의 열쇠: 날짜 + 책
+export const recordKey = (date, bookId) => `${date}|${bookId}`;
 
 // ---------- 연속일수 ----------
 // 오늘부터 거꾸로 세어 accept 이상인 날의 수.
@@ -140,38 +157,38 @@ export function clampEndPage(v, totalPages) {
   return Math.min(max, Math.max(0, n));
 }
 
-// 그 책의 date 이전 마지막 기록의 endPage (없으면 0)
-export function prevEndPage(records, bookId, date) {
+// 그 책의 date 이전 마지막 기록의 endPage (없으면 출발점 base = 앱에 넣기 전 이미 읽은 쪽수, 기본 0)
+export function prevEndPage(records, bookId, date, base = 0) {
   let best = null;
   for (const r of records || []) {
     if (r.bookId !== bookId || r.date >= date) continue;
     if (!best || r.date > best.date) best = r;
   }
-  return best ? Number(best.endPage) || 0 : 0;
+  return best ? Number(best.endPage) || 0 : Number(base) || 0;
 }
 
 export function pagesRead(endPage, prev) {
   return Math.max(0, (Number(endPage) || 0) - (Number(prev) || 0));
 }
 
-export function makePagesRecord({ date, projectId, bookId, endPage, totalPages, records }) {
+export function makePagesRecord({ date, projectId, bookId, endPage, totalPages, records, base = 0 }) {
   const e = clampEndPage(endPage, totalPages);
-  const prev = prevEndPage(records, bookId, date);
-  return { date, projectId, bookId, endPage: e, pages: pagesRead(e, prev), minutes: null, mode: 'pages' };
+  const prev = prevEndPage(records, bookId, date, base);
+  return { id: recordKey(date, bookId), date, projectId: projectId ?? null, bookId, endPage: e, pages: pagesRead(e, prev), minutes: null, mode: 'pages' };
 }
 
-export function makeTimeRecord({ date, projectId, bookId, records, settings }) {
-  const prev = prevEndPage(records, bookId, date);
+export function makeTimeRecord({ date, projectId, bookId, records, settings, base = 0 }) {
+  const prev = prevEndPage(records, bookId, date, base);
   const minutes = (settings && settings.minMinutes) || DEFAULT_SETTINGS.minMinutes;
-  return { date, projectId, bookId, endPage: prev, pages: 0, minutes, mode: 'time' };
+  return { id: recordKey(date, bookId), date, projectId: projectId ?? null, bookId, endPage: prev, pages: 0, minutes, mode: 'time' };
 }
 
 // 한 책의 기록을 날짜순으로 다시 계산한다(지난 날짜를 고쳤을 때 뒤 기록의 쪽수를 맞춤).
 // 바뀐 기록만 돌려준다.
-export function recomputeBook(records, bookId) {
+export function recomputeBook(records, bookId, base = 0) {
   const list = (records || []).filter((r) => r.bookId === bookId).sort((a, b) => (a.date < b.date ? -1 : 1));
   const changed = [];
-  let prev = 0;
+  let prev = Number(base) || 0;
   for (const r of list) {
     let next;
     if (r.mode === 'time') next = { ...r, endPage: prev, pages: 0 };
@@ -182,11 +199,11 @@ export function recomputeBook(records, bookId) {
   return changed;
 }
 
-// 그 책의 가장 최근 기록 endPage (현재 쪽)
-export function latestEndPage(records, bookId) {
+// 그 책의 가장 최근 기록 endPage (현재 쪽). 기록이 없으면 출발점(이미 읽은 쪽수)
+export function latestEndPage(records, bookId, base = 0) {
   let best = null;
   for (const r of records || []) if (r.bookId === bookId && (!best || r.date > best.date)) best = r;
-  return best ? Number(best.endPage) || 0 : 0;
+  return best ? Number(best.endPage) || 0 : Number(base) || 0;
 }
 
 // ---------- 오늘 상태 문구 ----------
@@ -360,7 +377,7 @@ export function cycleStats({ project, subcategories, books, records, settings, t
   const withDays = done.filter((b) => isDateStr(b.startDate) && isDateStr(b.finishDate) && b.finishDate >= b.startDate)
     .map((b) => ({ ...b, days: daysBetween(b.startDate, b.finishDate) + 1 }));
   const avgDaysPerBook = withDays.length ? round1(withDays.reduce((a, b) => a + b.days, 0) / withDays.length) : null;
-  const pageDays = recs.filter((r) => (Number(r.pages) || 0) > 0);
+  const pageDays = [...m.values()].filter((r) => r.pages > 0);
   const pagesPerReadDay = pageDays.length ? round1(pageDays.reduce((a, r) => a + r.pages, 0) / pageDays.length) : null;
   let weekly = null, weeklyReason = '';
   const days4 = Math.min(28, sinceStart);
@@ -632,8 +649,10 @@ export function applyCategoryEdit({ projectId, subcategories, books, recommendat
 // ---------- 백업 파일 확인 ----------
 // 버전 2: recommendations(추천 도서) 추가. 버전 1 파일은 추천 없음으로 가져온다.
 // 버전 3: 테마백독 여러 개(프로젝트에 endDate, 진행 중은 1개).
-// 버전 4: 가져온 책 표시(책에 carriedFromPage·carriedFromProjectId). 버전 1·2·3 파일도 그대로 가져온다.
-export const SCHEMA_VERSION = 4;
+// 버전 4: 가져온 책 표시(책에 carriedFromPage·carriedFromProjectId).
+// 버전 5(v1.4): 하루 기록 열쇠 날짜 → 날짜+책(같은 날 여러 책), 책에 scope(project|outside)·readBefore·prevSubcategoryId,
+//               프로젝트에 endType(완료|중단)·endNote. 버전 1~4 파일도 그대로 가져온다(모든 책 project, readBefore 0).
+export const SCHEMA_VERSION = 5;
 const STORES = ['projects', 'subcategories', 'books', 'dayRecords'];
 
 export function validateBackup(obj) {
@@ -661,15 +680,18 @@ export function validateBackup(obj) {
     }
   }
   const bookIds = new Set(data.books.map((b) => b.id));
-  const dates = new Set();
+  const keys = new Set();
   for (const r of data.dayRecords) {
     if (!r || !isDateStr(r.date)) return fail('날짜 형식이 틀린 기록이 있습니다.');
-    if (dates.has(r.date)) return fail(`같은 날짜(${r.date}) 기록이 두 번 있습니다.`);
-    dates.add(r.date);
+    // 버전 4까지는 날짜당 1건, 버전 5부터는 날짜+책당 1건
+    const k = obj.schemaVersion >= 5 ? recordKey(r.date, r.bookId) : r.date;
+    if (keys.has(k)) return fail(`같은 날짜(${r.date}) 기록이 두 번 있습니다.`);
+    keys.add(k);
     if (!bookIds.has(r.bookId)) return fail(`${r.date} 기록의 책을 찾을 수 없습니다.`);
   }
   for (const b of data.books) {
     if (!['planned', 'reading', 'done', 'dropped'].includes(b.status)) return fail('책 상태 값이 틀렸습니다.');
+    if (b.scope != null && !['project', 'outside'].includes(b.scope)) return fail('책 소속 값이 틀렸습니다.');
   }
   return { ok: true };
 }
@@ -680,11 +702,12 @@ export function normalizeBackup(obj, nowIso) {
   const d = obj.data;
   const { id, ...settings } = d.settings || {};
   const exportedOk = typeof obj.exportedAt === 'string' && !Number.isNaN(Date.parse(obj.exportedAt));
+  const books = migrateBooks(inferCarried(d.books, d.dayRecords));
   return {
-    projects: migrateProjects(d.projects),
+    projects: migrateProjects(d.projects, books),
     subcategories: d.subcategories,
-    books: inferCarried(d.books, d.dayRecords),
-    dayRecords: d.dayRecords,
+    books,
+    dayRecords: migrateRecords(d.dayRecords),
     recommendations: Array.isArray(d.recommendations) ? d.recommendations : [],
     settings: { ...DEFAULT_SETTINGS, ...settings, lastBackupAt: exportedOk ? obj.exportedAt : nowIso },
   };
@@ -694,14 +717,41 @@ export function normalizeBackup(obj, nowIso) {
 // ---------- 테마백독 여러 개 (v1.2) ----------
 export const ACTIVE = '진행';
 export const DONE_STATUS = '완료';
+export const END_DONE = '완료';   // endType: 목표를 이루고 마침
+export const END_STOP = '중단';   // endType: 도중에 마침
 
 // 예전 데이터 정리: endDate 칸 추가, 상태 기본값, 예전 기본 설명 "1사이클"은 비운다(이제 몇 번째인지는 계산한다)
-export function migrateProjects(projects) {
-  return (projects || []).map((p) => ({
-    ...p,
-    description: /^\s*\d+\s*사이클\s*$/.test(p.description || '') ? '' : (p.description || ''),
-    status: p.status || ACTIVE,
-    endDate: p.endDate || null,
+// v1.4: 이미 마친 백독에 endType이 없으면 완독 수 ≥ 목표면 '완료', 아니면 '중단'(books를 줄 때)
+export function migrateProjects(projects, books = null) {
+  return (projects || []).map((p) => {
+    const out = {
+      ...p,
+      description: /^\s*\d+\s*사이클\s*$/.test(p.description || '') ? '' : (p.description || ''),
+      status: p.status || ACTIVE,
+      endDate: p.endDate || null,
+    };
+    if (out.status !== ACTIVE && !out.endType && books) {
+      const done = books.filter((b) => b.projectId === p.id && b.status === 'done').length;
+      out.endType = done >= (Number(p.targetBooks) || 0) ? END_DONE : END_STOP;
+      out.endNote = out.endNote || '';
+    }
+    return out;
+  });
+}
+
+// v1.4 책 정리: 소속(scope) 없으면 이번 테마백독(project), 이미 읽은 쪽수(readBefore) 없으면 0
+export function migrateBooks(books) {
+  return (books || []).map((b) => (b.scope && b.readBefore != null ? b : {
+    ...b,
+    scope: b.scope || (b.projectId ? 'project' : 'outside'),
+    readBefore: Number(b.readBefore) || 0,
+  }));
+}
+
+// v1.4 기록 정리: 열쇠(id = 날짜|책)와 projectId 칸
+export function migrateRecords(records) {
+  return (records || []).map((r) => (r.id === recordKey(r.date, r.bookId) && r.projectId !== undefined ? r : {
+    ...r, id: recordKey(r.date, r.bookId), projectId: r.projectId ?? null,
   }));
 }
 
@@ -749,7 +799,7 @@ export function durationText(start, end) {
 
 // 마치기: 읽는 중 책 처리 'carry'(다음 백독으로 가져가기) | 'finish'(완독 처리) | 'drop'(중단). 바뀐 책만 돌려준다.
 // 읽을 목록(planned) 책은 이전 백독에 그대로 남는다. 일일 기록은 건드리지 않는다.
-export function planFinishProject({ project, books, today, readingAction }) {
+export function planFinishProject({ project, books, today, readingAction, endType = END_DONE, endNote = '' }) {
   const changed = [];
   for (const b of books || []) {
     if (b.projectId !== project.id || b.status !== 'reading') continue;
@@ -758,7 +808,10 @@ export function planFinishProject({ project, books, today, readingAction }) {
     else if (readingAction === 'carry') changed.push({ ...b, carryOver: true });
     else throw new Error('읽는 중인 책을 어떻게 할지 정해야 합니다.');
   }
-  return { project: { ...project, status: DONE_STATUS, endDate: today }, books: changed };
+  return {
+    project: { ...project, status: DONE_STATUS, endDate: today, endType: endType === END_STOP ? END_STOP : END_DONE, endNote: endType === END_STOP ? String(endNote || '').trim() : '' },
+    books: changed,
+  };
 }
 
 // 새 백독 시작: structure 'empty'(→ "미분류" 1개) | 'copy'(직전 백독 구성 복사).
@@ -794,7 +847,7 @@ export function planReopenProject({ projects, books, projectId }) {
   const p = (projects || []).find((x) => x.id === projectId);
   if (!p) throw new Error('백독을 찾을 수 없습니다.');
   return {
-    project: { ...p, status: ACTIVE, endDate: null },
+    project: { ...p, status: ACTIVE, endDate: null, endType: null, endNote: '' },
     books: (books || []).filter((b) => b.projectId === projectId && b.carryOver).map((b) => ({ ...b, carryOver: false })),
   };
 }
@@ -827,6 +880,12 @@ export function historyTotals({ projects, books, records, settings }) {
   return {
     count: (projects || []).length,
     done: (books || []).filter((b) => b.status === 'done').length,
+    // v1.4: 완독 권수를 백독 / 백독 외로 나눠서도 준다. 마친 백독은 완료 / 중단으로 나눠 센다.
+    doneProject: (books || []).filter((b) => b.status === 'done' && b.scope !== 'outside').length,
+    doneOutside: (books || []).filter((b) => b.status === 'done' && b.scope === 'outside').length,
+    completed: (projects || []).filter((p) => p.status !== ACTIVE && p.endType !== END_STOP).length,
+    stopped: (projects || []).filter((p) => p.status !== ACTIVE && p.endType === END_STOP).length,
+    active: (projects || []).filter((p) => p.status === ACTIVE).length,
     pages: recs.reduce((a, r) => a + (Number(r.pages) || 0), 0),
     readDays: totalReadDays(recs, settings, null),
     firstDate: first,
@@ -876,4 +935,36 @@ export function inferCarried(books, records) {
     const last = prev[prev.length - 1];
     return { ...b, carriedFromProjectId: last.projectId, carriedFromPage: Number(last.endPage) || 0 };
   });
+}
+
+// ---------- v1.4 백독 외 독서 ----------
+export const isOutside = (b) => !!b && b.scope === 'outside';
+
+// 소속 바꾸기: 'project'(진행 중인 테마백독, 카테고리 필수) ↔ 'outside'(백독 외, 카테고리 비우고 이전 값 보관)
+// 마친 테마백독의 책은 바꿀 수 없다. 이 책의 기록 중 지금 소속의 기록만 새 소속(projectId)으로 옮긴다.
+export function planScopeChange({ book, toScope, project, subcategoryId = null, records = [] }) {
+  if (!book) throw new Error('책을 찾을 수 없습니다.');
+  const fromScope = isOutside(book) ? 'outside' : 'project';
+  if (fromScope === toScope) return { book, records: [] };
+  if (fromScope === 'project' && (!project || book.projectId !== project.id)) throw new Error('마친 테마백독의 책은 소속을 바꿀 수 없어요.');
+  let next;
+  if (toScope === 'project') {
+    if (!project) throw new Error('진행 중인 테마백독이 없어요. 먼저 테마백독을 시작하세요.');
+    if (!subcategoryId) throw new Error('카테고리를 골라 주세요.');
+    next = { ...book, scope: 'project', projectId: project.id, subcategoryId };
+  } else if (toScope === 'outside') {
+    next = { ...book, scope: 'outside', projectId: null, subcategoryId: null, prevSubcategoryId: book.subcategoryId || book.prevSubcategoryId || null };
+  } else {
+    throw new Error('소속 값이 틀렸습니다.');
+  }
+  const from = fromScope === 'outside' ? null : book.projectId;
+  const to = next.projectId ?? null;
+  const moved = (records || []).filter((r) => r.bookId === book.id && (r.projectId ?? null) === from).map((r) => ({ ...r, projectId: to }));
+  return { book: next, records: moved };
+}
+
+// 주간 쪽수 목표(B-M5): 목표 = 목표선×7, 최소 = 최소선×7
+export function weekPageGoal(settings) {
+  const s = { ...DEFAULT_SETTINGS, ...settings };
+  return { goal: s.goalPages * 7, min: s.minPages * 7 };
 }

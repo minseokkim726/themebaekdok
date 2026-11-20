@@ -12,19 +12,21 @@ import * as category from './screens/category.js';
 import * as recs from './screens/recs.js';
 import * as history from './screens/history.js';
 import * as newProject from './screens/newProject.js';
+import * as outside from './screens/outside.js';
 
 const ROUTES = {
   today: { screen: today, tabs: true },
   status: { screen: status, tabs: true },
   week: { screen: week, tabs: true },
-  add: { screen: addBook, tabs: false, needsProject: true },
-  finish: { screen: finish, tabs: false, needsProject: true },
+  add: { screen: addBook, tabs: false },
+  finish: { screen: finish, tabs: false },
   settings: { screen: settings, tabs: false },
   categories: { screen: categories, tabs: true, tab: 'status', needsProject: true },
   category: { screen: category, tabs: true, tab: 'status', needsProject: true },
   recs: { screen: recs, tabs: false, needsProject: true },
   history: { screen: history, tabs: true },
   newproject: { screen: newProject, tabs: false },
+  outside: { screen: outside, tabs: true, tab: 'status' },
 };
 
 const root = document.getElementById('screen');
@@ -80,7 +82,7 @@ document.addEventListener('visibilitychange', () => {
   const away = hiddenAt ? Date.now() - hiddenAt : 0;
   const dateChanged = renderedDate && renderedDate !== todayStr();
   if (away > 5 * 60 * 1000) checkForUpdate(); // 오래 쉬었다가 다시 켜면 새 버전 확인
-  if ((dateChanged || away > 5 * 60 * 1000) && ['status', 'week', 'history', 'category'].includes(route)) go('today');
+  if ((dateChanged || away > 5 * 60 * 1000) && ['status', 'week', 'history', 'category', 'outside'].includes(route)) go('today');
   else if (dateChanged && ROUTES[route].tabs) render();
 });
 

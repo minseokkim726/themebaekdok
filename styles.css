@@ -389,3 +389,48 @@ button.list-item {
 /* v1.3 A-2 가져온 책 설명 */
 .carry-note { font-size: 14px; color: var(--muted); line-height: 1.4; }
 .app-version { font-size: 14px; color: var(--muted); text-align: center; padding-top: 8px; }
+
+/* v1.4 여러 권: 홈 책 전환 칩 줄(가로 스크롤), 소속 뱃지 */
+.book-switch { display: flex; gap: 6px; overflow-x: auto; margin: -2px -4px 0; padding: 0 4px 2px; scrollbar-width: none; }
+.book-switch::-webkit-scrollbar { display: none; }
+.book-chip {
+  flex: none; display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border-radius: 22px;
+  border: 1px solid var(--line-strong); background: var(--card); font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap;
+}
+.book-chip[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-dark); }
+.badge { display: inline-block; font-size: 13px; font-weight: 700; line-height: 1; padding: 4px 6px; border-radius: 6px; background: var(--primary-soft); color: var(--primary-dark); white-space: nowrap; }
+.badge.out { background: #ECEAE4; color: #4A5155; }
+.card.multi { gap: 6px; }
+.status-page .badge, .stats-page .badge { font-size: 14px; }
+[hidden] { display: none !important; }
+
+/* v1.4 현황·백독 외 */
+.outside-row .n { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.outside-book { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.outside-book:first-of-type { border-top: none; }
+.sum-warn { font-size: 15px; font-weight: 700; color: var(--warn); }
+.sum-warn a { color: var(--warn); text-decoration: underline; margin-left: 6px; }
+.finish-btn { align-self: center; border: 1px solid var(--line-strong); background: var(--card); color: var(--text); font-weight: 500; }
+.help-btn {
+  width: 44px; height: 44px; margin: -12px -12px -12px -6px; padding: 0; border: none; background: transparent;
+  color: var(--primary); font-size: 16px; line-height: 1; vertical-align: middle; flex: none;
+}
+
+/* v1.4 주간: 쪽수 목표(B-M5), 막대 폭(B-L2), 달력(B-M3) */
+.week-goal .wg-num { font-size: 16px; }
+.week-goal .wg-num b { font-size: 22px; }
+.wg-bar { position: relative; height: 12px; border-radius: 6px; background: #DDD6C6; overflow: visible; }
+.wg-fill { height: 100%; border-radius: 6px; }
+.wg-min { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--warn); }
+.chart .cols { left: 0; right: 34px; }
+.chart .line-label { left: auto; right: 0; width: 32px; text-align: right; line-height: 1.1; padding: 0; transform: translateY(-50%); background: transparent; }
+.days { padding-left: 0; padding-right: 34px; }
+.cal-head span { text-align: center; font-size: 12px; color: var(--muted); font-weight: 700; }
+.cell.this-week { box-shadow: 0 0 0 2px var(--primary-soft), 0 0 0 3px var(--cal-min); }
+.end-note { color: var(--warn); }
+
+/* v1.4 B-L3 대비: 달력의 흐린 날짜 숫자 4.5:1 이상, 빈 진행 막대 바탕 한 단계 진하게 */
+.cell.before { color: #6E7578; }
+.bar { background: #DDD6C6; }
+/* 홈 오늘 막대의 ⓘ: 막대 줄 높이를 바꾸지 않게 겹쳐 둔다 */
+.scale .help-btn { position: absolute; right: -14px; top: -14px; margin: 0; }

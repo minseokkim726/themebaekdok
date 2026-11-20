@@ -12,6 +12,9 @@ export function render(root, d, ctx) {
   else renderList(root, d, ctx);
 }
 
+// 진행 중 / 완료 / 중단(v1.4 B-H3)
+const endLabel = (p) => (p.status === R.ACTIVE ? '진행 중' : p.endType === R.END_STOP ? '중단' : '완료');
+
 // ---------- 목록 ----------
 function renderList(root, d) {
   const tot = R.historyTotals({ projects: d.projects, books: d.allBooks, records: d.records, settings: d.settings });
@@ -25,8 +28,8 @@ function renderList(root, d) {
       <div class="card roomy">
         <div class="st-card-title">전체 합계</div>
         <div class="stat-tiles">
-          ${tile('테마백독', `${tot.count}회`)}
-          ${tile('완독 총', `${tot.done}권`)}
+          <div class="stat-tile"><div class="k">완료한 테마백독</div><span class="v num">${tot.completed}회</span>${tot.active || tot.stopped ? `<span class="why">${[tot.active ? `진행 중 ${tot.active}` : '', tot.stopped ? `중단 ${tot.stopped}` : ''].filter(Boolean).join(' · ')}</span>` : ''}</div>
+          ${tile('완독 총', `백독 ${tot.doneProject} · 백독 외 ${tot.doneOutside}`)}
           ${tile('읽은 쪽수 합계', `${tot.pages.toLocaleString('ko-KR')}쪽`)}
           ${tile('읽은 날 합계', `${tot.readDays}일`)}
           ${tile('첫 기록일', tot.firstDate ? fmtDot(tot.firstDate) : '—')}
@@ -41,16 +44,34 @@ function renderList(root, d) {
           : `${fmtDot(p.startDate)} ~ ${fmtDot(p.endDate)} · 완독 ${done} / ${p.targetBooks}권 · ${R.durationText(p.startDate, p.endDate)}`;
         return `
           <a class="card roomy hist-card" href="${active ? '#/status' : `#/history/${encodeURIComponent(p.id)}`}" aria-label="${d.ordinals[p.id]}번째 테마백독 ${esc(p.name)} ${active ? '진행 중' : '자세히'}">
-            <span class="st-eyebrow">${d.ordinals[p.id]}번째 테마백독 · ${active ? '진행 중' : '마침'}</span>
+            <span class="st-eyebrow">${d.ordinals[p.id]}번째 테마백독 · ${endLabel(p)}</span>
             <span class="topic-name">${esc(p.name)}</span>
             <span class="st-meta num">${esc(period)}</span>
             <span class="bar thick"><span style="width:${pctOf(done, p.targetBooks)}%"></span></span>
           </a>`;
       }).join('')}
       ${hasPast ? '' : '<div class="st-body" style="text-align:center">첫 테마백독을 마치면 여기에 쌓입니다.</div>'}
+      ${outsideSection(d)}
       ${d.project ? '' : '<a class="btn primary" href="#/newproject">새 테마백독 시작</a>'}
       <div class="page-bottom-space"></div>
     </div>`;
+}
+
+// v1.4 A4: 백독 외 독서(전체 기간 완독 목록, 연도별)
+function outsideSection(d) {
+  const all = d.outsideBooks || [];
+  if (!all.length) return '';
+  const done = all.filter((b) => b.status === 'done').sort((a, b) => ((a.finishDate || '') < (b.finishDate || '') ? 1 : -1));
+  const years = [...new Set(done.map((b) => (b.finishDate || '').slice(0, 4)))];
+  return `
+      <div class="card roomy">
+        <div class="row"><div class="st-card-title">백독 외 독서</div><div class="st-meta">완독 ${done.length}권</div></div>
+        ${done.length ? years.map((y) => `
+          <div class="st-meta" style="margin-top:4px">${esc(y)}년 · ${done.filter((b) => (b.finishDate || '').startsWith(y)).length}권</div>
+          <ul class="paste-list">${done.filter((b) => (b.finishDate || '').startsWith(y)).map((b) => `<li><span class="st-item-title">${esc(b.title)}</span> <span class="st-meta">· ${esc(fmtDot(b.finishDate))}</span>${b.thought ? `<br><span class="st-body">${esc(b.thought)}</span>` : ''}</li>`).join('')}</ul>`).join('')
+          : '<div class="st-body">아직 완독한 백독 외 책이 없어요.</div>'}
+        <a class="link-btn" href="#/outside" style="align-self:flex-start;padding:0">백독 외 독서 화면 ›</a>
+      </div>`;
 }
 
 // ---------- 지난 백독 상세 ----------
@@ -80,7 +101,8 @@ function renderDetail(root, d, ctx) {
     <div class="page status-page">
       <div class="row"><a class="back" href="#/history">← 히스토리</a></div>
       <div class="card roomy topic-card">
-        <div class="st-eyebrow">${ord}번째 테마백독 · ${active ? '진행 중' : '마침'}</div>
+        <div class="st-eyebrow">${ord}번째 테마백독 · ${endLabel(p)}</div>
+        ${p.endType === R.END_STOP && p.endNote ? `<div class="st-body end-note">중단 메모: ${esc(p.endNote)}</div>` : ''}
         <div class="topic-name">${esc(p.name)}</div>
         ${p.description ? `<div class="st-body topic-desc">${esc(p.description)}</div>` : ''}
         <div class="st-meta num">${esc(fmtDot(p.startDate))} ~ ${active ? '진행 중' : `${esc(fmtDot(p.endDate))} · ${esc(R.durationText(p.startDate, p.endDate))}`}</div>
