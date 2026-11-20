@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F6F3EC">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="테마백독">
+<title>테마백독</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <main id="screen" tabindex="-1"><p class="loading">불러오는 중…</p></main>
+  <nav class="tabs" id="tabs" aria-label="화면 이동">
+    <a href="#/today" data-tab="today">오늘</a>
+    <a href="#/week" data-tab="week">주간</a>
+    <a href="#/status" data-tab="status">현황</a>
+    <a href="#/history" data-tab="history">히스토리</a>
+  </nav>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<dialog id="dialog" class="dialog"></dialog>
+<script type="module" src="js/main.js"></script>
+<script>
+  // 안전장치: 앱이 8초 안에 열리지 않으면(파일을 못 읽은 경우 등) 다시 열기 버튼을 보여 준다.
+  setTimeout(function () {
+    var el = document.querySelector('#screen .loading');
+    if (!el) return;
+    el.innerHTML = '앱을 여는 데 시간이 걸리고 있어요.<br><button type="button" class="btn primary" style="margin-top:12px" onclick="location.reload()">다시 열기</button>';
+  }, 8000);
+</script>
+</body>
+</html>
