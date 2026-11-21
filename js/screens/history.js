@@ -3,6 +3,7 @@ import * as repo from '../repo.js';
 import * as R from '../rules.js';
 import { esc, fmtDot } from '../format.js';
 import { toast, ask, alertMsg, openDialog, copyText } from './shared.js';
+import { bookHref } from './bookActions.js';
 
 const isWebLink = (u) => /^https?:\/\/\S+$/i.test(String(u || '').trim());
 const pctOf = (n, t) => (t ? Math.min(100, (n / t) * 100) : 0);
@@ -68,7 +69,7 @@ function outsideSection(d) {
         <div class="row"><div class="st-card-title">백독 외 독서</div><div class="st-meta">완독 ${done.length}권</div></div>
         ${done.length ? years.map((y) => `
           <div class="st-meta" style="margin-top:4px">${esc(y)}년 · ${done.filter((b) => (b.finishDate || '').startsWith(y)).length}권</div>
-          <ul class="paste-list">${done.filter((b) => (b.finishDate || '').startsWith(y)).map((b) => `<li><span class="st-item-title">${esc(b.title)}</span> <span class="st-meta">· ${esc(fmtDot(b.finishDate))}</span>${b.thought ? `<br><span class="st-body">${esc(b.thought)}</span>` : ''}</li>`).join('')}</ul>`).join('')
+          <ul class="paste-list">${done.filter((b) => (b.finishDate || '').startsWith(y)).map((b) => `<li><a class="st-item-title book-link" href="${bookHref(b.id, true)}">${esc(b.title)}</a> <span class="st-meta">· ${esc(fmtDot(b.finishDate))}</span>${b.thought ? `<br><span class="st-body">${esc(b.thought)}</span>` : ''}</li>`).join('')}</ul>`).join('')
           : '<div class="st-body">아직 완독한 백독 외 책이 없어요.</div>'}
         <a class="link-btn" href="#/outside" style="align-self:flex-start;padding:0">백독 외 독서 화면 ›</a>
       </div>`;
@@ -95,7 +96,7 @@ function renderDetail(root, d, ctx) {
   const st = R.periodStats({ project: p, subcategories: subs, books, records: d.records, settings: d.settings, today: d.today });
   const maxM = Math.max(1, ...st.months.map((m) => m.done));
   const tile = (k, v) => `<div class="stat-tile"><div class="k">${esc(k)}</div><span class="v num">${esc(v)}</span></div>`;
-  const listItem = (b) => `<li><span class="st-item-title">${esc(b.title)}</span>${b.author ? ` <span class="st-meta">· ${esc(b.author)}</span>` : ''} <span class="st-meta">· ${esc(catName(b.subcategoryId))}</span></li>`;
+  const listItem = (b) => `<li><a class="st-item-title book-link" href="${bookHref(b.id, true)}">${esc(b.title)}</a>${b.author ? ` <span class="st-meta">· ${esc(b.author)}</span>` : ''} <span class="st-meta">· ${esc(catName(b.subcategoryId))}</span></li>`;
 
   root.innerHTML = `
     <div class="page status-page">
@@ -143,7 +144,7 @@ function renderDetail(root, d, ctx) {
         <div class="row"><div class="st-card-title">완독한 책</div><div class="st-meta">${done.length}권</div></div>
         ${done.length === 0 ? '<div class="st-body">완독한 책이 없어요.</div>' : `<div class="st-done-list">${done.map((b) => `
           <div class="st-done hist-book">
-            <span class="t"><span class="st-item-title">${esc(b.title)}</span><span class="st-meta num">${esc(fmtDot(b.finishDate))}</span></span>
+            <span class="t"><a class="st-item-title book-link" href="${bookHref(b.id, true)}">${esc(b.title)}</a><span class="st-meta num">${esc(fmtDot(b.finishDate))}</span></span>
             <span class="st-meta">${esc([b.author, catName(b.subcategoryId)].filter(Boolean).join(' · '))}</span>
             <span class="st-body">${b.thought ? esc(b.thought) : '<span class="st-meta">한 줄 생각 없음</span>'}</span>
             <span class="hist-book-btns">
@@ -155,7 +156,7 @@ function renderDetail(root, d, ctx) {
       ${carriedOut.length ? `
       <div class="card roomy">
         <div class="row"><div class="st-card-title">다음 백독으로 가져감</div><div class="st-meta">${carriedOut.length}권</div></div>
-        <ul class="paste-list">${carriedOut.map((b) => `<li><span class="st-item-title">${esc(b.title)}</span> <span class="st-meta">· 이 백독에서 ${Number(b.carriedFromPage) || 0}/${b.totalPages}쪽까지 읽음 · ${d.ordinals[b.projectId] ? `${d.ordinals[b.projectId]}번째 백독으로` : ''}</span></li>`).join('')}</ul>
+        <ul class="paste-list">${carriedOut.map((b) => `<li><a class="st-item-title book-link" href="${bookHref(b.id, true)}">${esc(b.title)}</a> <span class="st-meta">· 이 백독에서 ${Number(b.carriedFromPage) || 0}/${b.totalPages}쪽까지 읽음 · ${d.ordinals[b.projectId] ? `${d.ordinals[b.projectId]}번째 백독으로` : ''}</span></li>`).join('')}</ul>
       </div>` : ''}
       ${dropped.length + planned.length + carried.length ? `
       <details class="card roomy hist-more">
@@ -195,8 +196,8 @@ function renderDetail(root, d, ctx) {
   });
 }
 
-// 지난 백독의 완독한 책: 한 줄 생각과 독서평 링크만 고친다
-async function editNotes(book, ctx) {
+// 지난 백독의 완독한 책: 한 줄 생각과 독서평 링크만 고친다(v1.5 책 상세에서도 쓴다)
+export async function editNotes(book, ctx) {
   if (!book) return;
   let vals = null;
   const res = await openDialog(`

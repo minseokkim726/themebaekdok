@@ -10,8 +10,9 @@ const DB_NAME = 'themebaekdok';
 //  2 = v1.1 추천 도서(recommendations) 추가
 //  3 = v1.4 하루 기록을 '날짜+책' 열쇠의 records로 옮김(같은 날 여러 책). 예전 dayRecords(날짜 열쇠)는
 //      그대로 남겨 두는 안전용 사본이고 더 이상 읽거나 쓰지 않는다.
-const DB_VERSION = 3;
-const STORES = ['projects', 'subcategories', 'books', 'records', 'settings', 'meta', 'recommendations'];
+//  4 = v1.5 책별 메모(memos) 추가. 없는 저장소만 만들고 기존 데이터는 건드리지 않는다.
+const DB_VERSION = 4;
+const STORES = ['projects', 'subcategories', 'books', 'records', 'settings', 'meta', 'recommendations', 'memos'];
 
 const FIRST_SUBCATEGORIES = [
   ['독서·문해력', 25],
@@ -23,6 +24,9 @@ const FIRST_SUBCATEGORIES = [
 
 // ---------- IndexedDB 작은 래퍼 ----------
 let dbPromise = null;
+let blockedHandler = null;
+// 저장소 형식을 올려야 하는데 다른 창·탭이 옛 버전으로 열어 두고 있을 때 부를 함수(main.js가 안내를 띄운다)
+export function onBlocked(fn) { blockedHandler = fn; }
 
 function openDb() {
   if (dbPromise) return dbPromise;
@@ -38,6 +42,7 @@ function openDb() {
       make('settings', 'id');
       make('meta', 'id');
       make('recommendations', 'id');
+      make('memos', 'id');
       const fresh = !db.objectStoreNames.contains('records');
       make('records', 'id');
       // v1.3 이하(저장소 버전 1·2)에서 올라오면: 날짜 열쇠 기록을 '날짜|책' 열쇠로 한 건도 빠짐없이 복사한다.
@@ -57,8 +62,9 @@ function openDb() {
       resolve(db);
     };
     req.onerror = () => { dbPromise = null; reject(req.error); };
-    // 예전 버전이 다른 탭에 열려 있으면 그 탭이 저장소를 닫을 때까지 기다린다(예전 코드도 스스로 닫는다)
-    req.onblocked = () => {};
+    // 예전 버전이 다른 탭에 열려 있으면 그 탭이 저장소를 닫을 때까지 기다린다(예전 코드도 스스로 닫는다).
+    // v1.5 A: 기다리는 동안 화면에 안내를 띄운다(옛 탭을 닫으면 이 요청이 이어서 성공한다).
+    req.onblocked = () => { try { if (blockedHandler) blockedHandler(); } catch { /* 안내만 빠진다 */ } };
   });
   return dbPromise;
 }
@@ -158,7 +164,7 @@ export async function init() {
 // readingBooks: 읽는 중인 책 전부(백독 + 백독 외), 가장 최근에 기록한 책이 앞. readingBook = 그 첫 책.
 // records: 전체 기록(연속·쉰 날·주간 막대). projectRecords: 진행 중인 백독 기간의 기록(백독 외 책 포함, 통계용).
 export async function load() {
-  const all = await readAll(['projects', 'subcategories', 'books', 'records', 'settings', 'recommendations']);
+  const all = await readAll(['projects', 'subcategories', 'books', 'records', 'settings', 'recommendations', 'memos']);
   const allBooks = R.migrateBooks(all.books).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const projects = R.migrateProjects(all.projects, allBooks);
   const project = R.activeProject(projects);
@@ -193,6 +199,8 @@ export async function load() {
     readingBooks,
     readingBook: readingBooks[0] || null,
     recommendations: all.recommendations.filter((r) => r.projectId === pid),
+    memos: R.migrateMemos(all.memos),
+    memoCounts: R.memoCountMap(all.memos),
   };
 }
 
@@ -400,6 +408,68 @@ export async function finishBook(bookId, { finishDate, subcategoryId, thought, r
   return done;
 }
 
+// ---------- 책별 메모 (v1.5) ----------
+function cleanMemoFields({ text, page, type }) {
+  return {
+    text: String(text ?? '').trim(),
+    page: R.memoPage(page),
+    type: R.MEMO_TYPES.includes(type) ? type : 'thought',
+  };
+}
+
+// 메모 한 건 추가. 본문이 비어 있으면 저장하지 않는다(오류).
+export async function addMemo({ bookId, text, page = null, type = 'thought', source = 'typed' }) {
+  const all = await readAll(['books']);
+  if (!all.books.some((b) => b.id === bookId)) throw new Error('책을 찾을 수 없습니다.');
+  const f = cleanMemoFields({ text, page, type });
+  if (!f.text) throw new Error('메모 내용을 적어 주세요.');
+  const now = new Date().toISOString();
+  const memo = { id: newId('m'), bookId, ...f, createdAt: now, updatedAt: now, source: source === 'paste' ? 'paste' : 'typed' };
+  await write({ put: { memos: [memo] } });
+  return memo;
+}
+
+// 하이라이트 붙여넣기: 이미 있는 같은 본문 인용은 건너뛴다. { added, skipped }
+export async function addHighlights(bookId, items) {
+  const existing = await listMemos(bookId);
+  const plan = R.planHighlightImport(items, existing);
+  const base = Date.now();
+  // 같은 쪽 안에서 붙여 넣은 순서가 유지되도록 1ms씩 늦춘 시각을 쓴다
+  const memos = plan.add.map((it, i) => {
+    const t = new Date(base + i).toISOString();
+    return { id: newId('m'), bookId, text: String(it.text).trim(), page: R.memoPage(it.page), type: 'quote', createdAt: t, updatedAt: t, source: 'paste' };
+  });
+  if (memos.length) await write({ put: { memos } });
+  return { added: memos.length, skipped: plan.skipped };
+}
+
+export async function updateMemo(id, fields) {
+  const all = await readAll(['memos']);
+  const m = all.memos.find((x) => x.id === id);
+  if (!m) throw new Error('메모를 찾을 수 없습니다.');
+  const f = cleanMemoFields({ text: fields.text ?? m.text, page: 'page' in fields ? fields.page : m.page, type: fields.type ?? m.type });
+  if (!f.text) throw new Error('메모 내용을 적어 주세요.');
+  const next = { ...m, ...f, updatedAt: new Date().toISOString() };
+  await write({ put: { memos: [next] } });
+  return next;
+}
+
+export async function deleteMemo(id) {
+  await write({ del: { memos: [id] } });
+}
+
+// 한 책의 메모(쪽수순, 쪽 없는 메모는 맨 뒤)
+export async function listMemos(bookId) {
+  const all = await readAll(['memos']);
+  return R.sortMemos(R.migrateMemos(all.memos).filter((m) => m.bookId === bookId));
+}
+
+// { 책 id: 메모 개수 }
+export async function memoCounts() {
+  const all = await readAll(['memos']);
+  return R.memoCountMap(all.memos);
+}
+
 // ---------- 설정 ----------
 export async function saveSettings({ settings, project, subcategories }) {
   const d = await load();
@@ -449,6 +519,7 @@ export async function exportData() {
       books: all.books,
       dayRecords: all.records, // 파일 속 이름은 예전과 같이 dayRecords(버전 5부터 날짜+책당 1건)
       recommendations: all.recommendations,
+      memos: all.memos, // 버전 6(v1.5)부터
       // 파일 안의 마지막 백업 시각 = 내보낸 시각(이 파일로 복원하면 알림이 바로 뜨지 않게)
       settings: { ...settingsOf(all.settings), lastBackupAt: exportedAt },
     },
@@ -472,6 +543,7 @@ export async function importData(obj) {
       books: data.books,
       records: data.dayRecords,
       recommendations: data.recommendations,
+      memos: data.memos, // 버전 5 이하 파일은 [] (메모 없음)
       settings: [{ id: 'settings', ...data.settings }],
       // 버전 2 이상 파일은 추천을 그대로 가져온다. 버전 1 파일은 추천 없음 → 다음 시작 때 초안을 한 번 넣는다.
       meta: [{ id: 'meta', schemaVersion: R.SCHEMA_VERSION, recSeeded: obj.schemaVersion >= 2 }],

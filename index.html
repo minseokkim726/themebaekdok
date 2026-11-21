@@ -32,7 +32,8 @@
   setTimeout(function () {
     var el = document.querySelector('#screen .loading');
     if (!el) return;
-    el.innerHTML = '앱을 여는 데 시간이 걸리고 있어요.<br><button type="button" class="btn primary" style="margin-top:12px" onclick="location.reload()">다시 열기</button>';
+    // v1.5 A: 업데이트 직후 옛 버전 탭 때문에 멈춘 경우 안내를 한 줄 더한다
+    el.innerHTML = '앱을 여는 데 시간이 걸리고 있어요.<br>다른 창이나 Chrome 탭에 열려 있는 테마백독을 모두 닫은 뒤 다시 열어 주세요. 기록은 그대로 있습니다.<br><button type="button" class="btn primary" style="margin-top:12px" onclick="location.reload()">다시 열기</button>';
   }, 8000);
 </script>
 </body>

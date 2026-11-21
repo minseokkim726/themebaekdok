@@ -652,7 +652,8 @@ export function applyCategoryEdit({ projectId, subcategories, books, recommendat
 // 버전 4: 가져온 책 표시(책에 carriedFromPage·carriedFromProjectId).
 // 버전 5(v1.4): 하루 기록 열쇠 날짜 → 날짜+책(같은 날 여러 책), 책에 scope(project|outside)·readBefore·prevSubcategoryId,
 //               프로젝트에 endType(완료|중단)·endNote. 버전 1~4 파일도 그대로 가져온다(모든 책 project, readBefore 0).
-export const SCHEMA_VERSION = 5;
+// 버전 6(v1.5): 책별 메모(memos) 추가. 버전 1~5 파일은 메모 없음으로 가져온다.
+export const SCHEMA_VERSION = 6;
 const STORES = ['projects', 'subcategories', 'books', 'dayRecords'];
 
 export function validateBackup(obj) {
@@ -689,6 +690,17 @@ export function validateBackup(obj) {
     keys.add(k);
     if (!bookIds.has(r.bookId)) return fail(`${r.date} 기록의 책을 찾을 수 없습니다.`);
   }
+  if (obj.schemaVersion >= 6 && !Array.isArray(data.memos)) return fail('"memos" 목록이 없습니다.');
+  if (Array.isArray(data.memos)) {
+    const ids = new Set();
+    for (const m of data.memos) {
+      if (!m || typeof m.id !== 'string' || !m.id) return fail('"memos"에 id가 없는 항목이 있습니다.');
+      if (ids.has(m.id)) return fail('"memos"에 같은 id가 두 번 있습니다.');
+      ids.add(m.id);
+      if (!bookIds.has(m.bookId)) return fail('메모의 책을 찾을 수 없습니다.');
+      if (typeof m.text !== 'string') return fail('메모 본문이 없습니다.');
+    }
+  }
   for (const b of data.books) {
     if (!['planned', 'reading', 'done', 'dropped'].includes(b.status)) return fail('책 상태 값이 틀렸습니다.');
     if (b.scope != null && !['project', 'outside'].includes(b.scope)) return fail('책 소속 값이 틀렸습니다.');
@@ -709,6 +721,7 @@ export function normalizeBackup(obj, nowIso) {
     books,
     dayRecords: migrateRecords(d.dayRecords),
     recommendations: Array.isArray(d.recommendations) ? d.recommendations : [],
+    memos: Array.isArray(d.memos) ? migrateMemos(d.memos) : [], // 버전 5 이하 파일은 메모 없음
     settings: { ...DEFAULT_SETTINGS, ...settings, lastBackupAt: exportedOk ? obj.exportedAt : nowIso },
   };
 }
@@ -967,4 +980,183 @@ export function planScopeChange({ book, toScope, project, subcategoryId = null, 
 export function weekPageGoal(settings) {
   const s = { ...DEFAULT_SETTINGS, ...settings };
   return { goal: s.goalPages * 7, min: s.minPages * 7 };
+}
+
+// ---------- v1.5 책별 메모 ----------
+export const MEMO_TYPES = ['thought', 'quote', 'question'];
+export const MEMO_TYPE_LABEL = { thought: '생각', quote: '인용', question: '질문' };
+
+// 쪽수 칸 값 → 양의 정수 또는 null(빈칸·0·숫자 아님)
+export function memoPage(v) {
+  if (v == null || v === '') return null;
+  const n = Math.round(Number(String(v).replace(/[^\d.]/g, '')));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// v1.5.1 말한 쪽수: 본문 맨 앞의 쪽수 표기("37쪽", "37 쪽", "37페이지", "p.37", "P. 37", "p37")를 읽는다.
+// 뒤에 붙은 , . : 공백은 함께 뗀다. 한글 숫자("삼십칠 쪽")·본문 중간 표기는 읽지 않는다.
+// 뗀 뒤 본문이 비면(쪽수만 말함) 읽지 않는다. { text, page } (못 읽으면 page null, text 그대로)
+const LEAD_PAGE_RE = /^\s*(?:p\.?\s*(\d{1,5})(?!\d)|(\d{1,5})\s*(?:쪽|페이지))[\s,.:]*/i;
+export function leadingMemoPage(text) {
+  const s = String(text ?? '');
+  const m = LEAD_PAGE_RE.exec(s);
+  if (!m) return { text: s, page: null };
+  const page = memoPage(m[1] || m[2]);
+  const rest = s.slice(m[0].length);
+  if (page == null || !rest.trim()) return { text: s, page: null };
+  return { text: rest, page };
+}
+
+// 메모 저장 값: 쪽수 칸을 직접 고쳤으면 칸 값 우선(본문 그대로), 아니면 본문 앞 쪽수 → 없으면 칸 값
+export function resolveMemoInput({ text, pageField, pageTouched }) {
+  if (!pageTouched) {
+    const lead = leadingMemoPage(text);
+    if (lead.page != null) return { text: lead.text, page: lead.page };
+  }
+  return { text: String(text ?? ''), page: memoPage(pageField) };
+}
+
+// 메모 정리(예전 데이터·백업 파일): 종류·출처 기본값, 쪽수는 숫자 또는 null
+export function migrateMemos(memos) {
+  return (memos || []).filter((m) => m && m.id && m.bookId).map((m) => ({
+    ...m,
+    page: memoPage(m.page),
+    type: MEMO_TYPES.includes(m.type) ? m.type : 'thought',
+    text: String(m.text ?? ''),
+    source: m.source === 'paste' ? 'paste' : 'typed',
+    createdAt: m.createdAt || null,
+    updatedAt: m.updatedAt || m.createdAt || null,
+  }));
+}
+
+// 메모 입력 시트의 쪽수 기본값: 그 책의 마지막 기록 쪽 → 없으면 이미 읽은 쪽수 → 그것도 없으면 null(빈칸)
+export function defaultMemoPage(records, book) {
+  if (!book) return null;
+  return memoPage(latestEndPage(records, book.id, Number(book.readBefore) || 0));
+}
+
+// 쪽수순, 같은 쪽은 만든 시각순, 쪽 없는 메모는 맨 뒤(그 안에서도 시각순)
+export function sortMemos(memos) {
+  return [...(memos || [])].sort((a, b) => {
+    const pa = a.page == null ? Infinity : a.page;
+    const pb = b.page == null ? Infinity : b.page;
+    if (pa !== pb) return pa - pb;
+    const ca = a.createdAt || '', cb = b.createdAt || '';
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
+// 책 id → 메모 개수
+export function memoCountMap(memos) {
+  const out = {};
+  for (const m of memos || []) out[m.bookId] = (out[m.bookId] || 0) + 1;
+  return out;
+}
+
+const QUOTE_PAIRS = [['"', '"'], ['“', '”'], ['‘', '’'], ["'", "'"], ['「', '」'], ['『', '』'], ['”', '”'], ['“', '“']];
+// 양쪽을 감싼 따옴표 한 겹을 뗀다
+export function stripQuotes(s) {
+  let t = String(s || '').trim();
+  for (const [o, c] of QUOTE_PAIRS) {
+    if (t.length >= 2 && t.startsWith(o) && t.endsWith(c)) return t.slice(o.length, t.length - c.length).trim();
+  }
+  return t;
+}
+const BULLET_RE = /^(?:[-•*·▪◦‣–—]+\s*|\d{1,3}[.)]\s+|\(\d{1,3}\)\s+)/;
+// 줄 끝 쪽수: "(p.37)" "p.37" "P. 37" "37쪽" "(37쪽)" "[p.37]"
+const PAGE_RE = /(?:^|[\s,·(\[])\(?\[?\s*(?:p\.\s*(\d{1,5})|(\d{1,5})\s*쪽)\s*[)\]]?\s*$/i;
+function takePage(s) {
+  const m = PAGE_RE.exec(s);
+  if (!m) return { text: s, page: null };
+  return { text: s.slice(0, m.index).replace(/[\s,·–—-]+$/, ''), page: memoPage(m[1] || m[2]) };
+}
+const normSpace = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+// 하이라이트 붙여넣기 나누기(E): 빈 줄이 하나라도 있으면 빈 줄 단위(덩어리 안 줄바꿈은 공백), 없으면 줄 단위.
+// 글머리 기호·번호와 감싼 따옴표를 떼고, 줄 끝 쪽수 표기를 쪽수로 읽는다. [{ text, page }]
+export function parseHighlights(text) {
+  const src = String(text || '').replace(/\r\n?/g, '\n');
+  const blocks = /\n[ \t 　]*\n/.test(src) ? src.split(/\n(?:[ \t 　]*\n)+/) : src.split('\n');
+  const out = [];
+  for (const block of blocks) {
+    let s = normSpace(block.split('\n').map((l) => l.trim()).join(' '));
+    s = s.replace(BULLET_RE, '').trim();
+    let { text: body, page } = takePage(s);
+    body = stripQuotes(body);
+    if (page == null) ({ text: body, page } = takePage(body));
+    body = normSpace(stripQuotes(body));
+    if (body) out.push({ text: body, page });
+  }
+  return out;
+}
+
+// 같은 본문 비교용(공백·감싼 따옴표 무시)
+const quoteKey = (t) => normSpace(stripQuotes(normSpace(t)));
+
+// 붙여넣은 인용 중 이 책에 이미 있는 인용(같은 본문)과 붙여넣기 안의 중복은 건너뛴다. { add, skipped }
+export function planHighlightImport(items, existingMemos) {
+  const seen = new Set((existingMemos || []).filter((m) => m.type === 'quote').map((m) => quoteKey(m.text)));
+  const add = [];
+  let skipped = 0;
+  for (const it of items || []) {
+    const k = quoteKey(it.text);
+    if (!k) continue;
+    if (seen.has(k)) { skipped++; continue; }
+    seen.add(k);
+    add.push(it);
+  }
+  return { add, skipped };
+}
+
+// 내보내기 파일 이름: 테마백독-메모-<책 제목>.md (파일 이름에 못 쓰는 글자는 뺀다)
+export function memoFileName(title) {
+  const t = String(title || '').replace(/[\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
+  return `테마백독-메모-${t || '책'}.md`;
+}
+
+const isoLocalDate = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+// AI 정리용 내보내기 글(F). 데이터가 없는 항목은 그 부분만 뺀다.
+// book: 책, projectName: 소속 테마백독 이름(백독 외면 무시), categoryName: 카테고리 이름,
+// memos: 이 책 메모, dateOf: ISO 시각 → 'YYYY-MM-DD'(기본: 기기 현지 날짜)
+export function buildMemoExport({ book, projectName = '', categoryName = '', memos = [], dateOf = isoLocalDate }) {
+  const lines = [];
+  lines.push(`# 『${normSpace(book.title)}』${book.author ? ` — ${normSpace(book.author)}` : ''}`);
+  const info = [];
+  if (isOutside(book)) info.push('백독 외 독서');
+  else {
+    if (projectName) info.push(`테마백독: ${projectName}`);
+    if (categoryName) info.push(`카테고리: ${categoryName}`);
+  }
+  if (Number(book.totalPages) > 0) info.push(`${book.totalPages}쪽`);
+  if (info.length) lines.push(`- ${info.join(' · ')}`);
+  if (book.startDate) {
+    const end = book.status === 'done' && book.finishDate ? book.finishDate
+      : book.status === 'dropped' ? '중단' : book.status === 'planned' ? '' : '읽는 중';
+    lines.push(`- 읽은 기간: ${book.startDate} ~${end ? ` ${end}` : ''}`);
+  }
+  if (book.thought && normSpace(book.thought)) lines.push(`- 한 줄 생각: ${normSpace(book.thought)}`);
+  const list = sortMemos(memos);
+  lines.push('', `## 메모 (쪽수순, ${list.length}개)`);
+  for (const m of list) {
+    let body = normSpace(m.text);
+    if (m.type === 'quote' && !/^["“].*["”]$/.test(body)) body = `"${body}"`;
+    const date = dateOf(m.createdAt);
+    lines.push(`- ${m.page != null ? `p.${m.page}` : '(쪽 없음)'} [${MEMO_TYPE_LABEL[m.type] || '생각'}] ${body}${date ? ` (${date})` : ''}`);
+  }
+  lines.push('', '## AI에게 요청',
+    '위 메모와 인용으로 다음을 만들어 줘:',
+    '1. 인용 카드(문장·쪽·내 메모)',
+    '2. 주제별 묶음과 내가 반응한 패턴',
+    '3. 이 메모에서 출발한 독서평 인터뷰 질문 5개',
+    "4. 카페용 '독후감 + AI 책토론' 글 초안",
+    '"이 책에서 내 생각은 무엇인가" 한 줄은 내가 직접 쓸 것이니 쓰지 말 것.');
+  return `${lines.join('\n')}\n`;
 }

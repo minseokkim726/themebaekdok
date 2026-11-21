@@ -7,7 +7,7 @@ import { openBookPreview } from './preview.js';
 import { openTopicEditor } from './topic.js';
 import { finishProjectFlow } from './projectFlow.js';
 import { noProjectHtml } from './today.js';
-import { scopeBadge, manageBook, helpBtn, bindHelp } from './bookActions.js';
+import { scopeBadge, manageBook, helpBtn, bindHelp, bookHref } from './bookActions.js';
 
 export function render(root, d, ctx) {
   const { project, settings: s, books, records, today, subcategories } = d;
@@ -44,7 +44,7 @@ export function render(root, d, ctx) {
           <div class="st-eyebrow">읽는 중${!outside && i === reading.findIndex((b) => !R.isOutside(b)) ? ` · 이번 주 ${ordinal}권째` : ''}</div>
           ${scopeBadge(book, subcategories)}
         </div>
-        <div class="st-book-title">${esc(book.title)}</div>
+        <a class="st-book-title book-link" href="${bookHref(book.id)}">${esc(book.title)}</a>
         ${carryNote(book)}
         <div class="bar thick"><div style="width:${p}%"></div></div>
         <div class="row center">
@@ -124,11 +124,11 @@ export function render(root, d, ctx) {
       <div class="card roomy">
         <div class="row center"><div class="st-card-title">완독한 책</div><div class="st-meta">백독 ${doneProject.length}권 · 백독 외 ${doneOutside.length}권 · 중단 ${dropped}권${helpBtn('drop', '중단이란?')}</div></div>
         ${done.length === 0 ? '<div class="st-body">아직 없어요.</div>' : `<div class="st-done-list">${done.map((b) => `
-          <button type="button" class="st-done" data-edit="${esc(b.id)}" aria-label="${esc(b.title)} 완독 정보 고치기">
+          <a class="st-done" href="${bookHref(b.id)}" aria-label="${esc(b.title)} 책 상세·메모">
             <span class="t"><span class="st-item-title">${esc(b.title)}</span><span class="st-meta num">${b.finishDate ? esc(fmtMD(b.finishDate)) : ''}</span></span>
             <span>${scopeBadge(b, subcategories)}</span>
             <span class="st-body">${b.thought ? esc(b.thought) : '<span class="st-meta">한 줄 생각 없음</span>'}</span>
-          </button>`).join('')}</div>`}
+          </a>`).join('')}</div>`}
       </div>
       <button type="button" class="btn small finish-btn" data-act="finish-project">이 테마백독 마치기</button>
       <div class="page-bottom-space"></div>
@@ -136,8 +136,6 @@ export function render(root, d, ctx) {
 
   root.querySelector('[data-act="topic-edit"]').addEventListener('click', () => openTopicEditor(d, ctx));
   root.querySelectorAll('[data-act="finish-project"]').forEach((b) => b.addEventListener('click', () => finishProjectFlow(d, ctx)));
-  root.querySelectorAll('[data-edit]').forEach((b) =>
-    b.addEventListener('click', () => ctx.go(`finish/${encodeURIComponent(b.dataset.edit)}`)));
   root.querySelectorAll('[data-manage]').forEach((b) =>
     b.addEventListener('click', () => { const bk = reading.find((x) => x.id === b.dataset.manage); if (bk) manageBook(bk, d, ctx); }));
   root.querySelectorAll('[data-preview]').forEach((b) =>

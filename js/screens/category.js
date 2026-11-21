@@ -3,7 +3,7 @@ import * as R from '../rules.js';
 import { esc, projectLine, fmtMD } from '../format.js';
 import { recRowsHtml, bindRecRows, recToolsHtml, bindRecTools } from './recs.js';
 import { startPlanned, carryNote } from './status.js';
-import { openBookPreview } from './preview.js';
+import { bookHref } from './bookActions.js';
 
 export function render(root, d, ctx) {
   const cat = d.subcategories.find((c) => c.id === ctx.param);
@@ -34,19 +34,19 @@ export function render(root, d, ctx) {
         ${reading.length + planned.length === 0 ? '<div class="st-body">이 카테고리에 읽는 중이거나 읽을 책이 없어요.</div>' : ''}
         ${reading.map((b) => `
           <div class="planned-row">
-            <button type="button" class="st-plain" data-preview="${esc(b.id)}" aria-label="${esc(b.title)} 미리보기">
+            <a class="st-plain" href="${bookHref(b.id)}" aria-label="${esc(b.title)} 책 상세·메모">
               <span class="st-item-title">${esc(b.title)}</span>
               <span class="st-meta">${esc([b.author, `${b.currentPage}/${b.totalPages}쪽`].filter(Boolean).join(' · '))}</span>
               ${carryNote(b)}
-            </button>
+            </a>
             <span class="rec-tag">읽는 중</span>
           </div>`).join('')}
         ${planned.map((b) => `
           <div class="planned-row">
-            <button type="button" class="st-plain" data-preview="${esc(b.id)}" aria-label="${esc(b.title)} 미리보기">
+            <a class="st-plain" href="${bookHref(b.id)}" aria-label="${esc(b.title)} 책 상세·메모">
               <span class="st-item-title">${esc(b.title)}</span>
               <span class="st-meta">${esc([b.author, `${b.totalPages}쪽`].filter(Boolean).join(' · '))}</span>
-            </button>
+            </a>
             <button type="button" class="btn outline small" data-start="${esc(b.id)}" style="flex:none">읽기 시작</button>
           </div>`).join('')}
       </div>
@@ -58,10 +58,10 @@ export function render(root, d, ctx) {
       <div class="card roomy">
         <div class="row"><div class="st-card-title">완독한 책</div><div class="st-meta">${done.length}권</div></div>
         ${done.length === 0 ? '<div class="st-body">아직 없어요.</div>' : `<div class="st-done-list">${done.map((b) => `
-          <button type="button" class="st-done" data-edit="${esc(b.id)}" aria-label="${esc(b.title)} 완독 정보 고치기">
+          <a class="st-done" href="${bookHref(b.id)}" aria-label="${esc(b.title)} 책 상세·메모">
             <span class="t"><span class="st-item-title">${esc(b.title)}</span><span class="st-meta num">${b.finishDate ? esc(fmtMD(b.finishDate)) : ''}</span></span>
             <span class="st-body">${b.thought ? esc(b.thought) : '<span class="st-meta">한 줄 생각 없음</span>'}</span>
-          </button>`).join('')}</div>`}
+          </a>`).join('')}</div>`}
       </div>
       <div class="page-bottom-space"></div>
     </div>`;
@@ -69,9 +69,4 @@ export function render(root, d, ctx) {
   bindRecRows(root, d, ctx);
   bindRecTools(root, d, ctx, cat.id);
   root.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => startPlanned(b.dataset.start, d.readingBook, ctx)));
-  root.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => ctx.go(`finish/${encodeURIComponent(b.dataset.edit)}`)));
-  root.querySelectorAll('[data-preview]').forEach((b) => b.addEventListener('click', () => {
-    const bk = d.books.find((x) => x.id === b.dataset.preview);
-    if (bk) openBookPreview({ title: bk.title, author: bk.author, note: '' }, null);
-  }));
 }

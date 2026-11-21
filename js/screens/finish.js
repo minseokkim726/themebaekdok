@@ -2,8 +2,9 @@
 import * as repo from '../repo.js';
 import { esc, projectLine, fmtKo } from '../format.js';
 import * as R from '../rules.js';
-import { toast } from './shared.js';
-import { changeScopeFlow } from './bookActions.js';
+import { toast, ask } from './shared.js';
+import { changeScopeFlow, bookHref } from './bookActions.js';
+import { openMemoExport } from './memo.js';
 
 // 소속을 바꾸면 화면을 다시 그리므로, 적던 내용을 잠깐 보관한다
 let draft = null;
@@ -20,6 +21,9 @@ export function render(root, d, ctx) {
     return;
   }
   const editing = book.status === 'done';
+  // v1.5: 책 상세의 [고치기]로 들어왔으면(#/finish/<id>/b) 저장·뒤로 모두 책 상세로 돌아간다
+  const fromBook = ctx.sub === 'b';
+  const backTo = fromBook ? bookHref(book.id) : '#/status';
   const outside = R.isOutside(book);
   const st = { cat: book.subcategoryId || (d.subcategories[0] || {}).id, busy: false };
   const date0 = book.finishDate || d.today;
@@ -27,7 +31,7 @@ export function render(root, d, ctx) {
   root.innerHTML = `
     <form class="page form" novalidate>
       <div class="row">
-        <a class="back" href="#/status">← 현황</a>
+        <a class="back" href="${backTo}">${fromBook ? '← 책 상세' : '← 현황'}</a>
         <div class="sub">${d.project ? esc(projectLine(d.project, d.ordinal)) : ''}</div>
       </div>
       <div>
@@ -85,7 +89,22 @@ export function render(root, d, ctx) {
         reviewUrl: q('#link').value,
       });
       toast(editing ? '고쳤어요' : `완독! ${book.title}`);
-      ctx.go(R.isOutside(book) ? 'outside' : 'status');
+      // v1.5 G: 완독 처리 직후 이 책에 메모가 있으면 한 번만 묻는다(없으면 묻지 않는다)
+      if (!editing) {
+        const memos = R.sortMemos((d.memos || []).filter((m) => m.bookId === book.id));
+        if (memos.length) {
+          const go = await ask({
+            title: `메모 ${memos.length}개를 AI 정리용으로 내보낼까요?`,
+            choices: [{ label: '내보내기', value: true, kind: 'primary' }, { label: '나중에', value: false }],
+          });
+          if (go) {
+            const fresh = (await repo.load()).allBooks.find((b) => b.id === book.id) || book;
+            await openMemoExport(d, fresh, memos);
+          }
+        }
+      }
+      if (fromBook) ctx.go(bookHref(book.id).slice(2));
+      else ctx.go(R.isOutside(book) ? 'outside' : 'status');
     } catch (e) {
       st.busy = false;
       toast(`저장하지 못했어요: ${e.message || e}`);

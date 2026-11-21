@@ -294,8 +294,8 @@ run('v1.1 D 백업 버전', () => {
   eq('버전 2 파일 → 통과, 추천 1개 유지', [R.validateBackup(v2).ok, R.normalizeBackup(v2, 'x').recommendations.length], [true, 1]);
   eq('버전 2인데 추천 목록 없음 → 거부', R.validateBackup({ ...v2, data: base.data }).ok, false);
   eq('추천 id 중복 → 거부', R.validateBackup({ ...v2, data: { ...v2.data, recommendations: [{ id: 'r1' }, { id: 'r1' }] } }).ok, false);
-  eq('버전 6(더 새 앱) → 거부', R.validateBackup({ ...v2, schemaVersion: 6 }).ok, false);
-  eq('지금 앱의 버전 = 5 (v1.4)', R.SCHEMA_VERSION, 5);
+  eq('버전 7(더 새 앱) → 거부', R.validateBackup({ ...v2, schemaVersion: 7 }).ok, false);
+  eq('지금 앱의 버전 = 6 (v1.5)', R.SCHEMA_VERSION, 6);
 });
 
 run('v1.1 D 추천 붙여넣기', () => {
@@ -570,7 +570,7 @@ run('v1.3 A', () => {
     data: { projects: [{ id: 'p1', status: '완료', startDate: '2026-12-01', endDate: '2027-01-02' }, { id: 'p2', status: '진행', startDate: '2027-01-03' }],
       subcategories: [], books: books.slice(0, 2), dayRecords: recs, recommendations: [], settings: {} } };
   eq('버전 3 파일 → 통과, 가져온 책 정보를 채워 가져옴', [R.validateBackup(v3).ok, R.normalizeBackup(v3, 'x').books[0].carriedFromPage], [true, 30]);
-  eq('지금 앱의 저장 형식 = 5 (v1.4)', R.SCHEMA_VERSION, 5);
+  eq('지금 앱의 저장 형식 = 6 (v1.5)', R.SCHEMA_VERSION, 6);
 
   group('v1.3 A-3·A-4. 문구와 연도');
   eq('합계 줄 "백독 목표"', R.categorySumText(95, 100).text, '합계 95권 / 백독 목표 100권 · 5권 부족');
@@ -630,8 +630,8 @@ run('v1.4 1단계', () => {
   eq('버전 5: 같은 날 두 책 기록 → 통과', R.validateBackup(v5).ok, true);
   eq('버전 5: 같은 날 같은 책 두 번 → 거부', R.validateBackup({ ...v5, data: { ...v5.data, dayRecords: [v5.data.dayRecords[0], v5.data.dayRecords[0]] } }).ok, false);
   eq('버전 4 이하: 같은 날 두 건은 예전처럼 거부', R.validateBackup({ ...v4, data: { ...v4.data, dayRecords: [oldRecs[1], { ...oldRecs[1], bookId: 'b1' }] } }).ok, false);
-  eq('버전 6(더 새 앱) → 거부', R.validateBackup({ ...v5, schemaVersion: 6 }).ok, false);
-  eq('지금 저장 형식 = 5', R.SCHEMA_VERSION, 5);
+  eq('버전 7(더 새 앱) → 거부', R.validateBackup({ ...v5, schemaVersion: 7 }).ok, false);
+  eq('지금 저장 형식 = 6', R.SCHEMA_VERSION, 6);
   eq('이미 정리된 책은 그대로(같은 객체)', (() => { const b = { id: 'z', scope: 'outside', readBefore: 5, projectId: null }; return R.migrateBooks([b])[0] === b; })(), true);
 });
 
@@ -688,6 +688,124 @@ run('v1.4 3단계', () => {
   eq('완료로 마치기: 메모 없음', [b.project.endType, b.project.endNote], ['완료', '']);
   const re = R.planReopenProject({ projects: [a.project], books: [], projectId: 'p1' });
   eq('되돌리기: endType·메모 지움', [re.project.status, re.project.endType, re.project.endNote], ['진행', null, '']);
+});
+
+run('v1.5 메모', () => {
+  group('v1.5 B. 메모 데이터·백업(버전 6)');
+  eq('지금 저장 형식 = 6 (v1.5)', R.SCHEMA_VERSION, 6);
+  const base5 = { app: 'themebaekdok', schemaVersion: 5, exportedAt: '2026-11-21T00:00:00Z', data: {
+    projects: [{ id: 'p1', status: '진행', startDate: '2026-11-01', targetBooks: 100 }],
+    subcategories: [{ id: 'c1', projectId: 'p1', name: '독서·문해력' }],
+    books: [{ id: 'b1', projectId: 'p1', scope: 'project', status: 'reading', totalPages: 300 }, { id: 'x1', projectId: null, scope: 'outside', status: 'done', totalPages: 200 }],
+    dayRecords: [{ id: '2026-11-20|b1', date: '2026-11-20', bookId: 'b1', pages: 20, endPage: 20, mode: 'pages' }],
+    recommendations: [], settings: {} } };
+  eq('버전 5(v1.4) 백업 → 통과, 메모 없음([])', [R.validateBackup(base5).ok, R.normalizeBackup(base5, 'x').memos], [true, []]);
+  eq('버전 5 백업의 책·기록은 그대로', [R.normalizeBackup(base5, 'x').books.length, R.normalizeBackup(base5, 'x').dayRecords.length], [2, 1]);
+  const memos = [
+    { id: 'm1', bookId: 'b1', page: 37, type: 'thought', text: '연결됨', createdAt: '2026-11-25T01:00:00Z', updatedAt: '2026-11-25T01:00:00Z', source: 'typed' },
+    { id: 'm2', bookId: 'x1', page: null, type: 'quote', text: '문장', createdAt: '2026-11-26T01:00:00Z', updatedAt: '2026-11-26T01:00:00Z', source: 'paste' },
+  ];
+  const v6 = { ...base5, schemaVersion: 6, data: { ...base5.data, memos } };
+  eq('버전 6 백업 → 통과, 메모 2개 복원(백독 외 책 메모 포함)', [R.validateBackup(v6).ok, R.normalizeBackup(v6, 'x').memos.map((m) => [m.id, m.bookId, m.page, m.type, m.source])],
+    [true, [['m1', 'b1', 37, 'thought', 'typed'], ['m2', 'x1', null, 'quote', 'paste']]]);
+  eq('버전 6인데 memos 목록 없음 → 거부', R.validateBackup({ ...v6, data: base5.data }).ok, false);
+  eq('메모 id 중복 → 거부', R.validateBackup({ ...v6, data: { ...v6.data, memos: [memos[0], memos[0]] } }).ok, false);
+  eq('없는 책의 메모 → 거부', R.validateBackup({ ...v6, data: { ...v6.data, memos: [{ ...memos[0], bookId: 'zz' }] } }).ok, false);
+  eq('버전 7(더 새 앱) → 거부', R.validateBackup({ ...v6, schemaVersion: 7 }).ok, false);
+  eq('메모 정리: 종류·출처·쪽수 기본값', R.migrateMemos([{ id: 'a', bookId: 'b', text: 'x', page: '0' }, { id: 'c', bookId: 'b', text: 'y', page: '12', type: 'zz', source: 'paste' }]).map((m) => [m.page, m.type, m.source]),
+    [[null, 'thought', 'typed'], [12, 'thought', 'paste']]);
+  eq('쪽수 칸: "" → null, "37" → 37, "0" → null, "abc" → null', ['', '37', '0', 'abc', null].map((v) => R.memoPage(v)), [null, 37, null, null, null]);
+  eq('책별 메모 개수', R.memoCountMap(memos), { b1: 1, x1: 1 });
+
+  group('v1.5.1 말한 쪽수(본문 맨 앞)');
+  const lp = (t) => { const r = R.leadingMemoPage(t); return [r.page, r.text]; };
+  eq('"37쪽, 이 부분 좋다" → 37', lp('37쪽, 이 부분 좋다'), [37, '이 부분 좋다']);
+  eq('"37 쪽 이 부분" → 37', lp('37 쪽 이 부분'), [37, '이 부분']);
+  eq('"37페이지: 이 부분" → 37', lp('37페이지: 이 부분'), [37, '이 부분']);
+  eq('"37 페이지. 이 부분" → 37', lp('37 페이지. 이 부분'), [37, '이 부분']);
+  eq('"p.37 이 부분" → 37', lp('p.37 이 부분'), [37, '이 부분']);
+  eq('"P. 37, 이 부분" → 37', lp('P. 37, 이 부분'), [37, '이 부분']);
+  eq('"p37 이 부분" → 37', lp('p37 이 부분'), [37, '이 부분']);
+  eq('앞 공백·뒤 ", " 함께 뗌: "  37쪽 ,  이 부분" → 37', lp('  37쪽 ,  이 부분'), [37, '이 부분']);
+  eq('한글 숫자 "삼십칠 쪽, 좋다"는 읽지 않음', lp('삼십칠 쪽, 좋다'), [null, '삼십칠 쪽, 좋다']);
+  eq('본문 중간 "이 부분은 37쪽과 연결"은 건드리지 않음', lp('이 부분은 37쪽과 연결'), [null, '이 부분은 37쪽과 연결']);
+  eq('쪽수 표기 아닌 숫자 "3가지 이유" → 그대로', lp('3가지 이유'), [null, '3가지 이유']);
+  eq('"PDF로 보니" → 그대로', lp('PDF로 보니'), [null, 'PDF로 보니']);
+  eq('쪽수만 말함 "37쪽" → 읽지 않음(본문이 비지 않게)', lp('37쪽'), [null, '37쪽']);
+  eq('"0쪽, 좋다" → 읽지 않음', lp('0쪽, 좋다'), [null, '0쪽, 좋다']);
+  const rv = (o) => { const r = R.resolveMemoInput(o); return [r.page, r.text]; };
+  eq('칸 안 고침(기본값 120) + "37쪽, 좋다" → p.37, 본문 "좋다"', rv({ text: '37쪽, 좋다', pageField: '120', pageTouched: false }), [37, '좋다']);
+  eq('칸을 50으로 고침 + "37쪽, 좋다" → p.50, 본문 그대로', rv({ text: '37쪽, 좋다', pageField: '50', pageTouched: true }), [50, '37쪽, 좋다']);
+  eq('칸을 비움(고침) + "37쪽, 좋다" → 쪽 없음, 본문 그대로', rv({ text: '37쪽, 좋다', pageField: '', pageTouched: true }), [null, '37쪽, 좋다']);
+  eq('칸 안 고침 + 앞 쪽수 없음 → 칸 값 120', rv({ text: '좋다', pageField: '120', pageTouched: false }), [120, '좋다']);
+  eq('칸 안 고침 + 중간 표기 → 칸 값 120, 본문 그대로', rv({ text: '이건 37쪽 얘기', pageField: '120', pageTouched: false }), [120, '이건 37쪽 얘기']);
+
+  group('v1.5 D. 쪽수 기본값');
+  const bk = { id: 'k', readBefore: 120 };
+  eq('이미 읽은 쪽수 120, 기록 전 → 120', R.defaultMemoPage([], bk), 120);
+  eq('마지막 기록 쪽 140', R.defaultMemoPage([{ bookId: 'k', date: '2026-11-20', endPage: 130 }, { bookId: 'k', date: '2026-11-21', endPage: 140 }, { bookId: 'z', date: '2026-11-22', endPage: 999 }], bk), 140);
+  eq('기록도 이미 읽은 쪽수도 없으면 빈칸(null)', R.defaultMemoPage([], { id: 'n', readBefore: 0 }), null);
+
+  group('v1.5 C. 메모 정렬(쪽수순, 같은 쪽은 시간순, 쪽 없는 것은 맨 뒤)');
+  const unsorted = [
+    { id: 'a', page: null, createdAt: '2026-11-20T00:00:00Z' },
+    { id: 'b', page: 52, createdAt: '2026-11-21T00:00:00Z' },
+    { id: 'c', page: 37, createdAt: '2026-11-22T00:00:00Z' },
+    { id: 'd', page: 37, createdAt: '2026-11-19T00:00:00Z' },
+    { id: 'e', page: null, createdAt: '2026-11-18T00:00:00Z' },
+    { id: 'f', page: 5, createdAt: '2026-11-23T00:00:00Z' },
+  ];
+  eq('정렬 결과', R.sortMemos(unsorted).map((m) => m.id), ['f', 'd', 'c', 'b', 'e', 'a']);
+
+  group('v1.5 E. 하이라이트 붙여넣기 나누기');
+  eq('빈 줄 없음 → 줄 단위', R.parseHighlights('첫 문장\n둘째 문장\n').map((x) => x.text), ['첫 문장', '둘째 문장']);
+  eq('빈 줄 있음 → 빈 줄 단위, 덩어리 안 줄바꿈은 공백', R.parseHighlights('긴 문장의\n앞부분과 뒷부분\n\n다음 하이라이트').map((x) => x.text), ['긴 문장의 앞부분과 뒷부분', '다음 하이라이트']);
+  eq('윈도 줄바꿈과 공백뿐인 빈 줄', R.parseHighlights('가\r\n  \r\n나').map((x) => x.text), ['가', '나']);
+  eq('글머리 기호·번호 떼기', R.parseHighlights('- 하나\n• 둘\n* 셋\n1. 넷\n2) 다섯').map((x) => x.text), ['하나', '둘', '셋', '넷', '다섯']);
+  eq('숫자로 시작하는 본문은 그대로(1.5배)', R.parseHighlights('1.5배 빠르다').map((x) => x.text), ['1.5배 빠르다']);
+  eq('따옴표 떼기', R.parseHighlights('"가"\n“나”\n‘다’\n「라」').map((x) => x.text), ['가', '나', '다', '라']);
+  eq('쪽수: (p.37) / p.52 / 120쪽 / 없음', R.parseHighlights('문장 하나 (p.37)\n문장 둘 p.52\n문장 셋 120쪽\n문장 넷').map((x) => [x.text, x.page]),
+    [['문장 하나', 37], ['문장 둘', 52], ['문장 셋', 120], ['문장 넷', null]]);
+  eq('따옴표와 쪽수 함께', R.parseHighlights('"문장" (p.37)\n“문장 p.9”').map((x) => [x.text, x.page]), [['문장', 37], ['문장', 9]]);
+  eq('글머리 + 따옴표 + 쪽수', R.parseHighlights('- “읽기는 사고다.” (P. 12)').map((x) => [x.text, x.page]), [['읽기는 사고다.', 12]]);
+  eq('본문 속 숫자는 쪽수로 읽지 않음(top10)', R.parseHighlights('순위 top10').map((x) => [x.text, x.page]), [['순위 top10', null]]);
+  eq('빈 조각 버림', R.parseHighlights('\n\n-\n\n""\n\n가\n\n').map((x) => x.text), ['가']);
+  eq('빈 입력 → []', R.parseHighlights(''), []);
+
+  group('v1.5 E. 같은 문장은 두 번 들어가지 않음');
+  const existing = [{ type: 'quote', text: '이미 있는 문장' }, { type: 'thought', text: '생각 메모' }];
+  const plan = R.planHighlightImport(R.parseHighlights('"이미 있는 문장"\n새 문장 (p.3)\n새   문장\n생각 메모'), existing);
+  eq('이미 있는 인용·붙여넣기 안 중복 건너뜀(생각 메모와 같은 글은 인용으로 저장)', [plan.add.map((x) => x.text), plan.skipped], [['새 문장', '생각 메모'], 2]);
+  eq('다시 붙여 넣으면 모두 건너뜀', R.planHighlightImport([{ text: '가' }, { text: '나' }], [{ type: 'quote', text: '가' }, { type: 'quote', text: '나' }]), { add: [], skipped: 2 });
+
+  group('v1.5 F. AI 정리용 내보내기 글');
+  const dateOf = (iso) => (iso ? iso.slice(0, 10) : '');
+  const book = { id: 'b1', title: '책 제목', author: '저자', scope: 'project', projectId: 'p1', totalPages: 300, status: 'done', startDate: '2026-11-20', finishDate: '2026-12-01', thought: '한 줄' };
+  const ms = [
+    { id: '3', page: null, type: 'question', text: '왜\n그럴까?', createdAt: '2026-11-27T01:00:00Z' },
+    { id: '2', page: 52, type: 'quote', text: '문장 그대로', createdAt: '2026-11-26T01:00:00Z' },
+    { id: '1', page: 37, type: 'thought', text: '이 부분 좋다, 내 연구와 연결됨', createdAt: '2026-11-25T01:00:00Z' },
+    { id: '4', page: 60, type: 'quote', text: '“이미 감싼 문장”', createdAt: '2026-11-28T01:00:00Z' },
+  ];
+  const askLines = ['', '## AI에게 요청', '위 메모와 인용으로 다음을 만들어 줘:', '1. 인용 카드(문장·쪽·내 메모)', '2. 주제별 묶음과 내가 반응한 패턴',
+    '3. 이 메모에서 출발한 독서평 인터뷰 질문 5개', "4. 카페용 '독후감 + AI 책토론' 글 초안", '"이 책에서 내 생각은 무엇인가" 한 줄은 내가 직접 쓸 것이니 쓰지 말 것.'];
+  eq('완독한 백독 책: 명세 형식 그대로', R.buildMemoExport({ book, projectName: '읽기와 사고', categoryName: '독서·문해력', memos: ms, dateOf }).split('\n'), [
+    '# 『책 제목』 — 저자',
+    '- 테마백독: 읽기와 사고 · 카테고리: 독서·문해력 · 300쪽',
+    '- 읽은 기간: 2026-11-20 ~ 2026-12-01',
+    '- 한 줄 생각: 한 줄',
+    '',
+    '## 메모 (쪽수순, 4개)',
+    '- p.37 [생각] 이 부분 좋다, 내 연구와 연결됨 (2026-11-25)',
+    '- p.52 [인용] "문장 그대로" (2026-11-26)',
+    '- p.60 [인용] “이미 감싼 문장” (2026-11-28)',
+    '- (쪽 없음) [질문] 왜 그럴까? (2026-11-27)',
+    ...askLines, '']);
+  const out = { id: 'x', title: '다른 책', author: '', scope: 'outside', projectId: null, totalPages: 200, status: 'reading', startDate: '2026-11-21', thought: '' };
+  eq('읽는 중 백독 외 책: 저자·한 줄 생각 줄 빠짐, "~ 읽는 중"', R.buildMemoExport({ book: out, memos: [ms[1]], dateOf }).split('\n').slice(0, 5), [
+    '# 『다른 책』', '- 백독 외 독서 · 200쪽', '- 읽은 기간: 2026-11-21 ~ 읽는 중', '', '## 메모 (쪽수순, 1개)']);
+  eq('파일 이름: 못 쓰는 글자 뺌', R.memoFileName('책: 제목? <1/2>'), '테마백독-메모-책 제목 12.md');
+  eq('파일 이름: 제목이 비면 "책"', R.memoFileName('???'), '테마백독-메모-책.md');
 });
 
 const sum = document.getElementById('summary');

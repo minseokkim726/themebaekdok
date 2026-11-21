@@ -434,3 +434,52 @@ button.list-item {
 .bar { background: #DDD6C6; }
 /* 홈 오늘 막대의 ⓘ: 막대 줄 높이를 바꾸지 않게 겹쳐 둔다 */
 .scale .help-btn { position: absolute; right: -14px; top: -14px; margin: 0; }
+
+/* v1.5 A 업데이트 안내(옛 버전 탭 때문에 저장소를 못 올릴 때) */
+.blocked-note { padding: 24px 20px; display: flex; flex-direction: column; gap: 14px; font-size: 16px; line-height: 1.6; color: var(--text); }
+.blocked-note p { margin: 0; }
+
+/* v1.5 홈 책 제목 줄의 [메모]: 줄 높이를 늘리지 않게 위아래로 겹쳐 둔다(누르는 영역은 44px) */
+.home-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.home-title { flex: 1; min-width: 0; font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.memo-btn {
+  flex: none; height: 44px; margin: -10px -6px -10px 0; padding: 0 12px; border: none; background: transparent;
+  display: flex; align-items: center; font-size: 15px; font-weight: 700; color: var(--primary-dark); position: relative;
+}
+.memo-btn::before {
+  content: ''; position: absolute; inset: 7px 0; border-radius: 15px; border: 1px solid var(--primary); background: var(--primary-soft); z-index: -1;
+}
+.memo-btn { z-index: 0; }
+
+/* v1.5 메모 시트 */
+.memo-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.memo-head .title { margin: 0; min-width: 0; }
+.memo-book { font-weight: 500; color: var(--muted); font-size: 15px; }
+.memo-save { flex: none; min-width: 84px; font-size: 16px; }
+.memo-text { width: 100%; font-size: 17px; line-height: 1.5; min-height: 120px; }
+.memo-opts { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.memo-page { display: flex; align-items: center; gap: 4px; font-size: 15px; font-weight: 700; }
+.memo-page .num-input { width: 72px; }
+.memo-types { display: flex; gap: 6px; }
+.memo-types .pill { min-height: 44px; }
+.memo-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.memo-foot .small { font-size: 14px; flex: 1; }
+.memo-del { color: #9B1C1C; border-color: #E2B4B4; }
+.memo-export { width: 100%; font-size: 14px; line-height: 1.5; font-family: var(--font); }
+.dialog.sheet { overflow-y: auto; }
+.dialog.sheet .textarea { width: 100%; }
+
+/* v1.5 책 상세 */
+.book-link { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+a.st-book-title { display: block; }
+.book-author { color: var(--muted); margin-top: -4px; }
+.book-notes { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.memo-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.memo-list { display: flex; flex-direction: column; }
+.memo-row {
+  display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; background: transparent;
+  border: none; border-top: 1px solid var(--line); padding: 12px 0; min-height: 44px;
+}
+.memo-row:first-child { border-top: none; }
+.memo-row .st-body { white-space: pre-wrap; }
+.memo-empty { color: var(--muted); }

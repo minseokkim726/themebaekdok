@@ -4,6 +4,7 @@ import * as R from '../rules.js';
 import { esc, fmtLong, projectLine, pct, localDateOf, WEEKDAYS } from '../format.js';
 import { toast, exportBackup } from './shared.js';
 import { helpBtn, bindHelp } from './bookActions.js';
+import { openMemoSheet } from './memo.js';
 
 const CHIPS = [10, 20, 30, 50];
 
@@ -108,7 +109,10 @@ export function render(root, d, ctx) {
           <div class="eyebrow">읽는 중</div>
           <div class="tiny">${outside ? '<span class="badge out">백독 외</span>' : esc(cat ? cat.name : '')}</div>
         </div>`}
-        <div style="font-size:18px;font-weight:700">${esc(book.title)}</div>
+        <div class="home-title-row">
+          <div class="home-title">${esc(book.title)}</div>
+          <button type="button" class="memo-btn" data-act="memo" aria-label="이 책에 메모 남기기"></button>
+        </div>
         <div class="bar"><div data-el="bookFill"></div></div>
         <div class="small num" data-el="bookLine"></div>
         <div class="accent" data-el="paceLine"></div>
@@ -228,6 +232,17 @@ export function render(root, d, ctx) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
   saveBtn.addEventListener('click', () => { st.cur = R.clampEndPage(st.cur, total); save(st.timeOnly ? 'time' : 'pages'); });
   root.querySelector('[data-act="time"]').addEventListener('click', () => save('time'));
+  // v1.5 D: [메모] → (말하기) → [저장]. 홈 화면은 다시 그리지 않고 버튼 글자만 바꾼다(적던 쪽수 유지).
+  const memoBtn = root.querySelector('[data-act="memo"]');
+  let memoCount = (d.memoCounts || {})[book.id] || 0;
+  const memoLabel = () => { memoBtn.textContent = memoCount ? `메모 ${memoCount}` : '메모'; };
+  memoLabel();
+  memoBtn.addEventListener('click', async () => {
+    if (await openMemoSheet({ book, page: R.defaultMemoPage(records, book) })) {
+      memoCount++;
+      memoLabel();
+    }
+  });
   root.querySelectorAll('[data-book]').forEach((b) => b.addEventListener('click', () => {
     selectedBookId = b.dataset.book;
     ctx.refresh();

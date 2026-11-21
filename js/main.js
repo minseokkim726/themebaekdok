@@ -13,6 +13,7 @@ import * as recs from './screens/recs.js';
 import * as history from './screens/history.js';
 import * as newProject from './screens/newProject.js';
 import * as outside from './screens/outside.js';
+import * as bookScreen from './screens/book.js';
 
 const ROUTES = {
   today: { screen: today, tabs: true },
@@ -27,14 +28,16 @@ const ROUTES = {
   history: { screen: history, tabs: true },
   newproject: { screen: newProject, tabs: false },
   outside: { screen: outside, tabs: true, tab: 'status' },
+  // v1.5 책 상세(#/book/<id>, 히스토리에서 들어오면 #/book/<id>/h): 탭 표시는 들어온 곳에 맞춘다
+  book: { screen: bookScreen, tabs: true, tab: (r) => (r.sub === 'h' ? 'history' : 'status') },
 };
 
 const root = document.getElementById('screen');
 const tabs = document.getElementById('tabs');
 
 function parseHash() {
-  const [name, param] = location.hash.replace(/^#\/?/, '').split('/');
-  return ROUTES[name] ? { name, param: param ? decodeURIComponent(param) : null } : { name: 'today', param: null };
+  const [name, param, sub] = location.hash.replace(/^#\/?/, '').split('/');
+  return ROUTES[name] ? { name, param: param ? decodeURIComponent(param) : null, sub: sub || null } : { name: 'today', param: null, sub: null };
 }
 
 export function go(path) {
@@ -43,6 +46,7 @@ export function go(path) {
 }
 
 let renderSeq = 0;
+let prevHash = null;
 let lastRoute = '';
 let renderedDate = null;
 
@@ -55,11 +59,12 @@ async function render() {
   data.today = todayStr();
   renderedDate = data.today;
   tabs.hidden = !def.tabs;
+  const tabName = typeof def.tab === 'function' ? def.tab(route) : (def.tab || route.name);
   tabs.querySelectorAll('a').forEach((a) => {
-    if (a.dataset.tab === (def.tab || route.name)) a.setAttribute('aria-current', 'page');
+    if (a.dataset.tab === tabName) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
-  const key = `${route.name}/${route.param || ''}`;
+  const key = `${route.name}/${route.param || ''}${route.sub ? `/${route.sub}` : ''}`;
   const keepScroll = key === lastRoute ? root.scrollTop : 0;
   lastRoute = key;
   root.innerHTML = '';
@@ -68,7 +73,7 @@ async function render() {
     tabs.hidden = false;
     root.innerHTML = today.noProjectHtml();
   } else {
-    def.screen.render(root, data, { param: route.param, go, refresh: render });
+    def.screen.render(root, data, { param: route.param, sub: route.sub, prev: prevHash, go, refresh: render });
   }
   root.dataset.screen = key;
   root.scrollTop = keepScroll;
@@ -82,8 +87,28 @@ document.addEventListener('visibilitychange', () => {
   const away = hiddenAt ? Date.now() - hiddenAt : 0;
   const dateChanged = renderedDate && renderedDate !== todayStr();
   if (away > 5 * 60 * 1000) checkForUpdate(); // 오래 쉬었다가 다시 켜면 새 버전 확인
-  if ((dateChanged || away > 5 * 60 * 1000) && ['status', 'week', 'history', 'category', 'outside'].includes(route)) go('today');
+  if ((dateChanged || away > 5 * 60 * 1000) && ['status', 'week', 'history', 'category', 'outside', 'book'].includes(route)) go('today');
   else if (dateChanged && ROUTES[route].tabs) render();
+});
+
+// v1.5 A: 저장소 형식을 올려야 하는데 옛 버전이 다른 창·탭에 열려 있을 때 안내.
+// 옛 탭을 닫으면 기다리던 열기가 이어서 성공하고 화면이 평소대로 그려진다.
+export const BLOCKED_TEXT = '다른 창이나 Chrome 탭에 열려 있는 테마백독을 모두 닫은 뒤 다시 열어 주세요. 기록은 그대로 있습니다.';
+repo.onBlocked(() => {
+  if (root.dataset.screen) return; // 이미 화면이 그려진 뒤면(드문 경우) 그대로 둔다
+  root.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'blocked-note';
+  box.dataset.el = 'db-blocked';
+  const p = document.createElement('p');
+  p.textContent = BLOCKED_TEXT;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn primary';
+  b.textContent = '다시 열기';
+  b.addEventListener('click', () => location.reload());
+  box.append(p, b);
+  root.appendChild(box);
 });
 
 async function start() {
@@ -91,7 +116,11 @@ async function start() {
     const { firstRun } = await repo.init();
     if (firstRun) location.hash = '#/add';
     else if (!ROUTES[location.hash.replace(/^#\/?/, '').split('/')[0]]) location.hash = '#/today';
-    window.addEventListener('hashchange', render);
+    window.addEventListener('hashchange', (e) => {
+      // 책 상세의 [← 뒤로]가 들어온 화면으로 돌아가도록 바로 전 주소를 기억한다
+      try { prevHash = new URL(e.oldURL).hash || null; } catch { prevHash = null; }
+      render();
+    });
     await render();
     // 추천 초안은 첫 화면을 띄운 뒤 넣는다(홈이 늦게 뜨지 않게). 넣었으면 추천이 보이는 화면만 다시 그린다.
     repo.seedRecommendations().then((n) => {

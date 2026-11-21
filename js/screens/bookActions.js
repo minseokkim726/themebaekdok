@@ -4,6 +4,9 @@ import * as R from '../rules.js';
 import { esc } from '../format.js';
 import { toast, ask, alertMsg } from './shared.js';
 
+// v1.5 책 상세 주소. fromHistory면 탭 표시를 히스토리로
+export const bookHref = (id, fromHistory = false) => `#/book/${encodeURIComponent(id)}${fromHistory ? '/h' : ''}`;
+
 // 소속 뱃지: 백독 책은 카테고리 이름, 백독 외 책은 회색 "백독 외"
 export function scopeBadge(book, subcategories) {
   if (R.isOutside(book)) return '<span class="badge out">백독 외</span>';

@@ -1,7 +1,7 @@
 // 서비스 워커: 앱 파일을 기기에 담아 두고 네트워크 없이도 열리게 한다.
 // 앱 파일을 고쳐 다시 올릴 때는 반드시 VERSION을 올린다. 새 버전은 파일 묶음 전체를 한 번에 받아 두고,
 // 묶음 안에서만 꺼내 쓴다(옛 파일과 새 파일이 섞여 앱이 멈추는 일을 막기 위해 파일별 뒤늦은 갱신은 하지 않는다).
-const VERSION = 'v1.4'; // js/version.js의 APP_VERSION과 같게
+const VERSION = 'v1.5.1'; // js/version.js의 APP_VERSION과 같게
 const CACHE = `themebaekdok-${VERSION}`;
 const SHELL = [
   './',
@@ -31,6 +31,8 @@ const SHELL = [
   'js/screens/history.js',
   'js/screens/bookActions.js',
   'js/screens/outside.js',
+  'js/screens/book.js',
+  'js/screens/memo.js',
   'data/recommendations-seed.json',
   'icons/icon-192.png',
   'icons/icon-512.png',

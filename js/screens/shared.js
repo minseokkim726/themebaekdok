@@ -90,7 +90,7 @@ export function importBackup() {
       const when = obj.exportedAt ? localDateOf(obj.exportedAt) : null;
       const yes = await ask({
         title: '현재 데이터를 덮어씁니다',
-        message: `백업 파일(${when ? fmtKo(when) : '날짜 모름'} · 책 ${obj.data.books.length}권 · 기록 ${obj.data.dayRecords.length}건)로 지금 데이터를 모두 바꿉니다.`,
+        message: `백업 파일(${when ? fmtKo(when) : '날짜 모름'} · 책 ${obj.data.books.length}권 · 기록 ${obj.data.dayRecords.length}건 · 메모 ${Array.isArray(obj.data.memos) ? obj.data.memos.length : 0}개)로 지금 데이터를 모두 바꿉니다.${Array.isArray(obj.data.memos) ? '' : ' 이 파일은 메모 기능 이전 버전이라 메모가 없어요. 지금 앱의 메모도 함께 바뀝니다.'}`,
         choices: [{ label: '덮어쓰기', value: true, kind: 'primary' }, { label: '취소', value: false }],
       });
       if (!yes) { done(false); return; }
